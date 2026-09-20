@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <!-- Camera access for Hand Mirror -->
+    <key>com.apple.security.device.camera</key>
+    <true/>
+    <!-- Calendar access for Calendar Widget -->
+    <key>com.apple.security.personal-information.calendars</key>
+    <true/>
+    <!-- Apple Events access for Spotify & Apple Music control -->
+    <key>com.apple.security.automation.apple-events</key>
+    <true/>
+</dict>
+</plist>

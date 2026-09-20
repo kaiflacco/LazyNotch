@@ -1,0 +1,44 @@
+# ─────────────────────────────────────────────────
+# LazyNotch — .gitignore
+# ─────────────────────────────────────────────────
+
+# Swift Package Manager build artifacts
+.build/
+.swiftpm/
+
+# Xcode
+*.xcodeproj/
+*.xcworkspace/
+xcuserdata/
+*.xccheckout
+*.xcscmblueprint
+*.moved-aside
+DerivedData/
+*.hmap
+*.ipa
+*.dSYM.zip
+*.dSYM
+
+# macOS system files
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.Spotlight-V100
+.Trashes
+Icon
+
+# Editor / IDE cruft
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Compiled binary (the .app is a build artifact; only source is versioned)
+LazyNotch.app/Contents/MacOS/LazyNotch
+main
+
+# Sensitive / local configuration
+*.env
+.secrets
