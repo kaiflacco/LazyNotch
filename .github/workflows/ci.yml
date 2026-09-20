@@ -1,0 +1,32 @@
+name: CI — Swift Build
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build (macOS)
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_16.app/Contents/Developer
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build (debug)
+        run: swift build -c debug 2>&1
+
+      - name: Build (release)
+        run: swift build -c release 2>&1
