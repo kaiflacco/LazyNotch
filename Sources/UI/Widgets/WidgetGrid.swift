@@ -4,12 +4,13 @@ import SwiftUI
 
 struct HomeRow: View {
     let namespace: Namespace.ID
+    var revealed: Bool = true
     @ObservedObject var mediaService = MediaService.shared
 
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             // Left: Full media player
-            MediaWidget(namespace: namespace)
+            MediaWidget(namespace: namespace, revealed: revealed)
                 .frame(maxWidth: .infinity)
 
             // Hairline divider
@@ -17,11 +18,13 @@ struct HomeRow: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 0.5)
                 .padding(.vertical, 14)
+                .morphReveal(revealed)
 
             // Right: Calendar
             CalendarWidget()
                 .frame(width: 216)
                 .padding(.leading, 14)
+                .morphReveal(revealed)
         }
         .frame(maxHeight: .infinity)
     }
@@ -32,6 +35,7 @@ struct HomeRow: View {
 struct VinylArtwork: View {
     var track: MediaTrack?
     let namespace: Namespace.ID
+    var revealed: Bool = true
     @ObservedObject private var mediaService = MediaService.shared
     @State private var isHovered = false
 
@@ -63,18 +67,22 @@ struct VinylArtwork: View {
             GeometryReader { geo in
                 let side = geo.size.height
                 ZStack(alignment: .bottomTrailing) {
-                    // Ambient glow
+                    // Ambient glow (fades in with the rest of the content)
                     artworkContent
                         .frame(width: side, height: side)
                         .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
                         .blur(radius: 20)
-                        .opacity(0.55)
+                        .opacity(revealed ? 0.55 : 0)
                         .scaleEffect(1.15)
                         .allowsHitTesting(false)
 
-                    // Real Album Artwork
+                    // Real Album Artwork — the hero element. It flies from the live-activity
+                    // strip via matchedGeometryEffect. Blurred while in flight (resolving to
+                    // sharp over contentMorphSpring) so the motion reads as a smooth morph —
+                    // a sharp tiny cover travelling looks laggy, a blurred one looks alive.
                     artworkContent
                         .matchedGeometryEffect(id: "albumArt", in: namespace)
+                        .blur(radius: revealed ? 0 : 12)
                         .frame(width: side, height: side)
                         .clipShape(RoundedRectangle(cornerRadius: side * 0.18, style: .continuous))
                         .overlay(
@@ -97,6 +105,7 @@ struct VinylArtwork: View {
 
                     // App icon badge
                     appIconBadge
+                        .opacity(revealed ? 1 : 0)
                         .offset(x: 5, y: 5)
                 }
                 .frame(width: side, height: side)
@@ -182,6 +191,7 @@ struct VinylArtwork: View {
 
 struct MediaWidget: View {
     let namespace: Namespace.ID
+    var revealed: Bool = true
     @ObservedObject var mediaService = MediaService.shared
 
     private var isPlaying: Bool {
@@ -195,7 +205,9 @@ struct MediaWidget: View {
     var body: some View {
         HStack(alignment: .center, spacing: 14) {
             // Album art — reacts to track changes via cachedArtwork and id(title)
-            VinylArtwork(track: mediaService.currentTrack, namespace: namespace)
+            // NOT morph-revealed: the artwork is the matchedGeometryEffect hero element
+            // that flies in from the live-activity strip and must stay visible mid-flight.
+            VinylArtwork(track: mediaService.currentTrack, namespace: namespace, revealed: revealed)
                 .frame(maxHeight: .infinity)
                 .aspectRatio(1, contentMode: .fit)
                 .id(mediaService.currentTrack?.title ?? "")
@@ -268,6 +280,7 @@ struct MediaWidget: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .morphReveal(revealed)
         }
         .frame(maxHeight: .infinity)
     }

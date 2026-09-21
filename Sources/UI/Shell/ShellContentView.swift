@@ -142,18 +142,42 @@ struct ShellContentView: View {
     }
 }
 
-// MARK: - Blur Transition
+// MARK: - Fluid Notch Content Transition
 
+/// NotchNook-style content reveal: elements mount blurred/invisible/slightly raised and
+/// resolve to sharp over the content morph spring. Applied per-element so the album
+/// artwork (matchedGeometryEffect hero flight) can be EXCLUDED and travel visibly.
+struct MorphRevealModifier: ViewModifier {
+    let revealed: Bool
+
+    func body(content: Content) -> some View {
+        content
+            .opacity(revealed ? 1 : 0)
+            .blur(radius: revealed ? 0 : 14)
+            .offset(y: revealed ? 0 : -14)
+            .scaleEffect(revealed ? 1 : 0.96, anchor: .top)
+    }
+}
+
+extension View {
+    func morphReveal(_ revealed: Bool) -> some View {
+        modifier(MorphRevealModifier(revealed: revealed))
+    }
+}
 
 extension AnyTransition {
-    static var blurAndScale: AnyTransition {
+    /// NotchNook-style content morph: outgoing content blurs+fades away IN PLACE (no
+    /// shrink — NotchNook never scales the strip content down on click), incoming content
+    /// blurs+fades IN from a heavy, clearly-visible blur, with a slight top-anchored drift
+    /// matching the shell's growth direction. Timing comes from contentMorphSpring.
+    static var notchContentTransition: AnyTransition {
         .asymmetric(
-            insertion: .scale(scale: 0.85, anchor: .top)
-                .combined(with: .opacity)
-                .combined(with: .modifier(active: BlurModifier(radius: 12), identity: BlurModifier(radius: 0))),
-            removal: .scale(scale: 0.85, anchor: .top)
-                .combined(with: .opacity)
-                .combined(with: .modifier(active: BlurModifier(radius: 12), identity: BlurModifier(radius: 0)))
+            insertion: .opacity
+                .combined(with: .blur(radius: 14))
+                .combined(with: .offset(y: -14))
+                .combined(with: .scale(scale: 0.96, anchor: .top)),
+            removal: .opacity
+                .combined(with: .blur(radius: 8))
         )
     }
 }
@@ -163,6 +187,14 @@ extension AnyTransition {
 struct MorphingNotchIsland: View {
     @ObservedObject var viewModel: ShellViewModel
     @Namespace private var heroNamespace
+    /// Drives the NotchNook-style content morph explicitly (blur → sharp) so the effect
+    /// runs even when SwiftUI skips insertion transitions (e.g. inside matched geometry).
+    @State private var contentRevealed = false
+    /// Keeps the expanded content in the tree briefly during collapse so it can blur out
+    /// in place (symmetric with how it blurs in on expand) instead of vanishing instantly.
+    @State private var expandedContentMounted = false
+    /// Drives the compact strip's blur-IN when returning from the expanded state.
+    @State private var stripRevealed = true
 
     // Live Activity sizing geometry
     static let liveActivityTopRadius: CGFloat = 10.0
@@ -183,9 +215,10 @@ struct MorphingNotchIsland: View {
         } else if viewModel.isExpanded {
             return LazyNotchWindowController.openWidth
         } else if viewModel.hasActiveLiveActivity {
-            return viewModel.compactSize.width + Self.liveActivityWingExtension * 2 + (viewModel.isHovered ? 6 : 0)
+            // NotchNook hover look: island droops slightly wider, anchored at the notch
+            return viewModel.compactSize.width + Self.liveActivityWingExtension * 2 + (viewModel.isHovered ? 8 : 0)
         } else {
-            return viewModel.compactSize.width + (viewModel.isHovered ? 8 : 0)
+            return viewModel.compactSize.width
         }
     }
 
@@ -194,9 +227,11 @@ struct MorphingNotchIsland: View {
             return LazyNotchWindowController.dropHUDHeight
         } else if viewModel.isExpanded {
             return LazyNotchWindowController.openHeight
+        } else if viewModel.hasActiveLiveActivity {
+            // NotchNook hover look: the strip pulls DOWNWARD (bottom-biased growth)
+            return viewModel.compactSize.height + (viewModel.isHovered ? 10 : 0)
         } else {
-            // Strictly sync vertical size with the physical Mac notch, plus a tactile swell on hover
-            return viewModel.compactSize.height + (viewModel.isHovered ? 4 : 0)
+            return viewModel.compactSize.height
         }
     }
 
@@ -206,9 +241,9 @@ struct MorphingNotchIsland: View {
         } else if viewModel.isExpanded {
             return 26.0
         } else if viewModel.hasActiveLiveActivity {
-            return Self.liveActivityTopRadius + (viewModel.isHovered ? 2 : 0)
+            return Self.liveActivityTopRadius
         } else {
-            return viewModel.isHovered ? 4.0 : 0.0
+            return 0.0
         }
     }
 
@@ -218,15 +253,23 @@ struct MorphingNotchIsland: View {
         } else if viewModel.isExpanded {
             return 42.0
         } else if viewModel.hasActiveLiveActivity {
-            return Self.liveActivityBottomRadius + (viewModel.isHovered ? 4 : 0)
+            return Self.liveActivityBottomRadius + (viewModel.isHovered ? 3 : 0)
         } else {
-            return viewModel.isHovered ? 14.0 : 10.0
+            return 10.0
         }
     }
 
-    private var isIslandVisible: Bool {
-        viewModel.isExpanded || viewModel.hasActiveLiveActivity
+    /// The shell only renders when there's something to show (live activity, expanded
+    /// panel, drop HUD). In the idle state it draws NOTHING — the physical notch shows
+    /// through untouched, instead of a black "copy" silhouette sitting on top of it.
+    private var shouldShowShell: Bool {
+        viewModel.hasActiveLiveActivity || viewModel.isExpanded
     }
+
+    /// Actual render visibility. Shown instantly when the shell grows out of the physical
+    /// notch; hidden only AFTER the collapse spring has fully shrunk it back, so the idle
+    /// silhouette never lingers on screen as a duplicate of the physical notch.
+    @State private var shellVisible = false
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -253,11 +296,11 @@ struct MorphingNotchIsland: View {
                 color: isDropHUDActive
                     ? SiriColors.purple.opacity(0.38)
                     : Color.black.opacity(
-                        viewModel.isExpanded ? 0.38 : (viewModel.hasActiveLiveActivity ? (viewModel.isHovered ? 0.45 : 0.22) : 0.0)
+                        viewModel.isExpanded ? 0.38 : (viewModel.hasActiveLiveActivity ? (viewModel.isHovered ? 0.45 : 0.22) : (viewModel.isHovered ? 0.25 : 0.0))
                     ),
-                radius: isDropHUDActive ? 22 : (viewModel.isExpanded ? 20 : (viewModel.hasActiveLiveActivity && viewModel.isHovered ? 16 : 8)),
+                radius: isDropHUDActive ? 22 : (viewModel.isExpanded ? 20 : (viewModel.hasActiveLiveActivity && viewModel.isHovered ? 18 : 8)),
                 x: 0,
-                y: isDropHUDActive ? 6 : (viewModel.isExpanded ? 10 : 3)
+                y: isDropHUDActive ? 6 : (viewModel.isExpanded ? 10 : (viewModel.hasActiveLiveActivity && viewModel.isHovered ? 5 : 3))
             )
             .shadow(
                 color: Color.black.opacity(viewModel.isExpanded ? 0.25 : 0.0),
@@ -269,21 +312,33 @@ struct MorphingNotchIsland: View {
             // Content container clipped to the current morphing notch silhouette
             ZStack(alignment: .top) {
                 // Collapsed Live Activity Strip
-                if !viewModel.isExpanded && viewModel.hasActiveLiveActivity {
+                if !viewModel.isExpanded && viewModel.hasActiveLiveActivity && !expandedContentMounted {
                     CompactNotchContent(viewModel: viewModel, namespace: heroNamespace)
                         .frame(width: targetWidth, height: targetHeight)
-                        .transition(.blurAndScale)
+                        // Blur-IN when returning from the expanded state — the exact
+                        // reverse of the expand morph (same spring, same values).
+                        .morphReveal(stripRevealed)
+                        .transition(.notchContentTransition)
                 }
 
                 // Expanded Full Nook Island Content
-                if viewModel.isExpanded {
-                    ExpandedNotchContent(viewModel: viewModel, selectedTab: $viewModel.activeTab, namespace: heroNamespace)
+                // Mounted the moment expansion starts (so it enters blurred within the same
+                // transaction), and kept mounted briefly after collapse begins so it can
+                // blur out in place — symmetric choreography both directions.
+                if viewModel.isExpanded || expandedContentMounted {
+                    ExpandedNotchContent(viewModel: viewModel, selectedTab: $viewModel.activeTab, namespace: heroNamespace, revealed: contentRevealed)
                         .frame(
-                            width: targetWidth,
-                            height: targetHeight,
+                            width: viewModel.isExpanded ? targetWidth : LazyNotchWindowController.openWidth,
+                            height: viewModel.isExpanded ? targetHeight : LazyNotchWindowController.openHeight,
                             alignment: .top
                         )
-                        .transition(.blurAndScale)
+                        // The album artwork is EXCLUDED from the blur choreography (handled
+                        // per-element inside) so its matchedGeometryEffect hero flight from
+                        // the live-activity strip stays visible, like NotchNook.
+                        // On collapse the content stays at open size and blurs out in place
+                        // while the shrinking shell clips it — symmetric with the entrance.
+                        .allowsHitTesting(viewModel.isExpanded)
+                        .transition(.notchContentTransition)
                 }
             }
             .frame(width: targetWidth, height: targetHeight, alignment: .top)
@@ -293,6 +348,7 @@ struct MorphingNotchIsland: View {
                     bottomCornerRadius: targetBottomRadius
                 )
             )
+
         }
         .frame(width: targetWidth, height: targetHeight, alignment: .top)
         .contentShape(
@@ -308,12 +364,69 @@ struct MorphingNotchIsland: View {
                 }
             }
         }
-        .opacity(isIslandVisible ? 1.0 : 0.0)
-        .animation(LazyNotchMotion.interactiveSpring, value: isIslandVisible)
+        .opacity(shellVisible ? 1.0 : 0.0)
+        .onAppear { shellVisible = shouldShowShell }
+        .onChange(of: shouldShowShell) { _, show in
+            if show {
+                // Appear instantly — the shell grows out of the physical notch, which is
+                // already black, so no fade is needed and nothing pops.
+                shellVisible = true
+            } else {
+                // Let the collapse spring shrink the shell back into the physical notch
+                // first, then hide the idle silhouette with a quick fade so it never
+                // reads as a copy of the notch.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                    guard !shouldShowShell else { return }
+                    withAnimation(.easeOut(duration: 0.12)) {
+                        shellVisible = false
+                    }
+                }
+            }
+        }
+        .onChange(of: viewModel.isExpanded) { _, expanded in
+            if expanded {
+                // Mount blurred/hidden, then reveal a beat after the shell starts growing.
+                expandedContentMounted = true
+                contentRevealed = false
+                withAnimation(LazyNotchMotion.contentMorphSpring.delay(LazyNotchMotion.contentMorphDelay)) {
+                    contentRevealed = true
+                }
+            } else {
+                // Symmetric exit: content blurs OUT in place (same spring/values as the
+                // blur-IN), then unmounts; the compact strip re-mounts blurred and
+                // resolves sharp — mirroring the entire entrance choreography.
+                withAnimation(LazyNotchMotion.contentMorphSpring) {
+                    contentRevealed = false
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) {
+                    guard !viewModel.isExpanded else { return }
+                    expandedContentMounted = false
+                    stripRevealed = false
+                    DispatchQueue.main.async {
+                        withAnimation(LazyNotchMotion.contentMorphSpring.delay(0.05)) {
+                            stripRevealed = true
+                        }
+                    }
+                }
+            }
+        }
         // Master organic spring physics matching NotchNook / iOS Dynamic Island:
         .animation(LazyNotchMotion.shellSpring(isExpanded: viewModel.isExpanded), value: viewModel.isExpanded)
         .animation(LazyNotchMotion.pillMorphSpring, value: viewModel.hasActiveLiveActivity)
         .animation(LazyNotchMotion.hoverSpring, value: viewModel.isHovered)
+    }
+}
+
+/// NotchNook-style press feedback for the live-activity strip: the content (cover +
+/// waveform) squishes vertically ~12% for one beat at mouse-down — the tactile
+/// "you clicked it" feel — while the shell itself never shrinks. Release springs
+/// back into the expansion morph.
+struct NotchStripPressStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(x: configuration.isPressed ? 0.98 : 1.0, y: configuration.isPressed ? 0.88 : 1.0)
+            .opacity(configuration.isPressed ? 0.85 : 1.0)
+            .animation(.spring(response: 0.15, dampingFraction: 0.65), value: configuration.isPressed)
     }
 }
 
@@ -338,6 +451,11 @@ struct CompactNotchContent: View {
             let contentHeight = viewModel.compactSize.height
             let totalWidth = viewModel.compactSize.width + (topRadius + borderMargin + wingWidth) * 2
 
+            Button {
+                withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
+                    viewModel.isExpanded = true
+                }
+            } label: {
             HStack(spacing: 0) {
                 // 1. Left top-ear flare & 2px border margin inset
                 Spacer()
@@ -377,13 +495,13 @@ struct CompactNotchContent: View {
                 Spacer()
                     .frame(width: topRadius + borderMargin, height: contentHeight)
             }
-            .frame(width: totalWidth, height: contentHeight)
-            .contentShape(Rectangle())
-            .onTapGesture {
-                withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
-                    viewModel.isExpanded = true
-                }
+                .frame(width: totalWidth, height: contentHeight)
+                .contentShape(Rectangle())
             }
+            // Press squish lives in NotchStripPressStyle (cover + waveform flatten on
+            // mouse-down, like NotchNook) — a real Button, so the click can never be
+            // eaten by a competing drag gesture.
+            .buttonStyle(NotchStripPressStyle())
             .opacity(viewModel.isHovered ? 1.0 : 0.94)
             .animation(LazyNotchMotion.interactiveSpring, value: viewModel.isHovered)
         }
@@ -407,6 +525,7 @@ struct ExpandedNotchContent: View {
     @ObservedObject var viewModel: ShellViewModel
     @Binding var selectedTab: ShellContentView.ShellTab
     let namespace: Namespace.ID
+    var revealed: Bool = true
 
     var body: some View {
         if viewModel.globalDragZone != .none {
@@ -421,13 +540,15 @@ struct ExpandedNotchContent: View {
                 TopBar(selectedTab: $selectedTab)
                     .padding(.top, 12)
                     .padding(.horizontal, 36)
+                    .morphReveal(revealed)
 
                 Group {
                     switch selectedTab {
                     case .home:
-                        HomeRow(namespace: namespace)
+                        HomeRow(namespace: namespace, revealed: revealed)
                     case .shelf:
                         LazyShelfView()
+                            .morphReveal(revealed)
                     }
                 }
                 .frame(maxHeight: .infinity)

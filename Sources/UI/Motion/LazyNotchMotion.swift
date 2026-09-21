@@ -9,21 +9,34 @@ import SwiftUI
 public enum LazyNotchMotion {
     // MARK: - Core Spring Constants
 
-    /// NotchNook / Dynamic Island opening spring: Fluid organic drop-down expansion (~360ms settle).
-    public static let openResponse: Double = 0.45
-    public static let openDamping: Double = 0.60 // More bounce
+    /// NotchNook / Dynamic Island opening spring: quick expansion with ONE clearly visible
+    /// overshoot (~4-6% peak at ~0.25s, settled ~0.6s) — measured from NotchNook's
+    /// click-to-expand motion. Bouncy but clean: no multi-oscillation wobble.
+    public static let openResponse: Double = 0.40
+    public static let openDamping: Double = 0.72
 
-    /// Closing spring: Crisp contraction into the notch (~250ms), clean settling.
-    public static let closeResponse: Double = 0.35
-    public static let closeDamping: Double = 0.85
+    /// Closing spring: mirrors the opening spring exactly (same response/damping) so
+    /// hover-out collapses with the same bouncy, single-overshoot feel as the open —
+    /// symmetric motion like NotchNook instead of a stiff snap shut.
+    public static let closeResponse: Double = 0.40
+    public static let closeDamping: Double = 0.72
 
     /// Content choreography spring: Slides down smoothly from the notch opening.
     public static let contentResponse: Double = 0.32
     public static let contentDamping: Double = 0.76
 
+    /// Content morph spring (NotchNook-style): deliberately slow, lightly damped entrance so
+    /// the blur phase is actually visible (~1s) — content stays soft/out-of-focus while it
+    /// settles into the freshly-grown shell with a slight grow-overshoot, then snaps sharp.
+    public static let contentMorphResponse: Double = 0.62
+    public static let contentMorphDamping: Double = 0.80
+    /// Beat between the shell starting to grow and the content following it.
+    public static let contentMorphDelay: Double = 0.10
+
     /// Tactile hover tension: Bottle-neck swell when cursor touches the notch.
-    public static let hoverResponse: Double = 0.22
-    public static let hoverDamping: Double = 0.70
+    /// Damped enough that hover settles in one soft motion (NotchNook-style), no wobble.
+    public static let hoverResponse: Double = 0.24
+    public static let hoverDamping: Double = 0.78
 
     // MARK: - Shell Morphing Springs
 
@@ -54,6 +67,13 @@ public enum LazyNotchMotion {
     )
 
     // MARK: - Content Choreography Springs
+
+    /// Slow, blur-friendly entrance used for the compact → expanded content morph.
+    public static let contentMorphSpring: Animation = .spring(
+        response: contentMorphResponse,
+        dampingFraction: contentMorphDamping,
+        blendDuration: 0.0
+    )
 
     /// Content entrance spring: Moves down into place smoothly during shell expansion.
     public static let contentEntranceSpring: Animation = .spring(
