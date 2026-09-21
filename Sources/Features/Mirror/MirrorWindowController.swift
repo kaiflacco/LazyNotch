@@ -29,7 +29,9 @@ public final class MirrorWindowController: NSObject, NSWindowDelegate {
             return
         }
 
-        let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? NSScreen.screens[0]
+        guard let screen = NSScreen.screens.first(where: { $0.safeAreaInsets.top > 0 }) ?? NSScreen.main ?? NSScreen.screens.first else {
+            return
+        }
         let screenFrame = screen.frame
 
         // Notch height (typically ~32-34 pt on Apple Silicon, or 25 pt menu bar)

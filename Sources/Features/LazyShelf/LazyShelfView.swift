@@ -72,27 +72,35 @@ public struct LazyShelfView: View {
 
     // MARK: - Empty Drop Target
 
-    private let accentBlue = Color(red: 0.18, green: 0.49, blue: 0.97)
+    // MARK: - Empty Drop Target
 
     private var emptyDropTarget: some View {
         ZStack {
+            // Ambient glow when targeted
+            if isTargeted {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(SiriColors.horizontalGradient)
+                    .blur(radius: 12)
+                    .opacity(0.25)
+            }
+
             // Card background
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .fill(
                     isTargeted
-                        ? Color.black.opacity(0.80)
+                        ? Color.black.opacity(0.82)
                         : Color.white.opacity(0.035)
                 )
 
             // Dashed border
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
                 .strokeBorder(
                     isTargeted
-                        ? accentBlue.opacity(0.85)
-                        : Color.white.opacity(0.11),
+                        ? AnyShapeStyle(SiriColors.horizontalGradient)
+                        : AnyShapeStyle(Color.white.opacity(0.12)),
                     style: StrokeStyle(
-                        lineWidth: isTargeted ? 1.8 : 1.0,
-                        dash: [7, 5]
+                        lineWidth: isTargeted ? 1.6 : 1.0,
+                        dash: [6, 4]
                     )
                 )
                 .animation(LazyNotchMotion.interactiveSpring, value: isTargeted)
@@ -103,32 +111,34 @@ public struct LazyShelfView: View {
                     Circle()
                         .fill(
                             isTargeted
-                                ? accentBlue.opacity(0.18)
-                                : Color.white.opacity(0.06)
+                                ? AnyShapeStyle(SiriColors.fullGradient.opacity(0.24))
+                                : AnyShapeStyle(Color.white.opacity(0.06))
                         )
-                        .frame(width: 44, height: 44)
-                        .scaleEffect(isTargeted ? 1.1 : 1.0)
+                        .frame(width: 42, height: 42)
+                        .scaleEffect(isTargeted ? 1.08 : 1.0)
 
                     Image(systemName: isTargeted ? "arrow.down.circle.fill" : "tray.and.arrow.down.fill")
-                        .font(.system(size: 19, weight: .semibold))
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(
-                            isTargeted ? accentBlue : Color.white.opacity(0.5)
+                            isTargeted
+                                ? AnyShapeStyle(SiriColors.horizontalGradient)
+                                : AnyShapeStyle(Color.white.opacity(0.55))
                         )
-                        .scaleEffect(isTargeted ? 1.12 : 1.0)
+                        .scaleEffect(isTargeted ? 1.10 : 1.0)
                 }
                 .animation(LazyNotchMotion.interactiveSpring, value: isTargeted)
 
                 VStack(spacing: 2) {
-                    Text(isTargeted ? "Release to Add Files" : "Drop files or click to browse")
-                        .font(.system(size: 12, weight: .semibold))
+                    Text(isTargeted ? "Release to Stage Files" : "Drop files or click to browse")
+                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(
-                            isTargeted ? accentBlue : Color.white.opacity(0.55)
+                            isTargeted ? Color.white : Color.white.opacity(0.60)
                         )
 
                     if !isTargeted {
-                        Text("Supports any file type")
+                        Text("Instant staging • QuickLook • Drag anywhere")
                             .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(Color.white.opacity(0.28))
+                            .foregroundStyle(Color.white.opacity(0.32))
                     }
                 }
                 .animation(LazyNotchMotion.interactiveSpring, value: isTargeted)
@@ -139,7 +149,7 @@ public struct LazyShelfView: View {
         .onTapGesture {
             addFilesViaPanel()
         }
-        .padding(.bottom, 10)
+        .padding(.bottom, 6)
         .help("Click to browse for files, or drop them here")
     }
 
@@ -149,14 +159,14 @@ public struct LazyShelfView: View {
         VStack(spacing: 4) {
             // Header bar with count and Clear All
             HStack {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     Text("\(store.items.count)")
                         .font(.system(size: 10, weight: .bold, design: .rounded))
                         .foregroundStyle(.white)
                         .frame(minWidth: 16, minHeight: 16)
                         .padding(.horizontal, 5)
                         .background(
-                            Capsule().fill(Color.white.opacity(0.18))
+                            Capsule().fill(SiriColors.horizontalGradient)
                         )
 
                     Text(store.items.count == 1 ? "item staged" : "items staged")
@@ -203,12 +213,14 @@ public struct LazyShelfView: View {
                     .fill(Color.white.opacity(isTargeted ? 0.10 : 0.04))
                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                     .strokeBorder(
-                        Color.white.opacity(isTargeted ? 0.35 : 0.12),
+                        isTargeted
+                            ? AnyShapeStyle(SiriColors.horizontalGradient)
+                            : AnyShapeStyle(Color.white.opacity(0.12)),
                         style: StrokeStyle(lineWidth: 1, dash: [4, 3])
                     )
                 Image(systemName: "plus")
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.4))
+                    .foregroundStyle(isTargeted ? AnyShapeStyle(SiriColors.horizontalGradient) : AnyShapeStyle(Color.white.opacity(0.4)))
             }
             .frame(width: 60, height: 72)
         }

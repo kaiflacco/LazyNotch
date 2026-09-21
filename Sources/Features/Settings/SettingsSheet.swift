@@ -320,7 +320,7 @@ public struct SettingsSheet: View {
                 HStack(spacing: 8) {
                     if !cameraManager.hasPermission {
                         Button {
-                            cameraManager.checkPermission()
+                            cameraManager.requestAccess()
                         } label: {
                             Text("Request Access")
                                 .font(.system(size: 11.5, weight: .medium))

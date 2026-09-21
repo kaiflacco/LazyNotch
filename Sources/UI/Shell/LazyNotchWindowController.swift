@@ -36,8 +36,13 @@ final class LazyNotchWindowController {
 
     // MARK: - Open geometry (sleek compact notch island)
 
-    static let openWidth: CGFloat = 598
-    static let openHeight: CGFloat = 164
+    static let openWidth: CGFloat = 620
+    static let openHeight: CGFloat = 180
+
+    // MARK: - Drop HUD geometry (sleek Siri drop capsule)
+
+    static let dropHUDWidth: CGFloat = 460
+    static let dropHUDHeight: CGFloat = 84
 
     // MARK: - Shadow canvas padding (prevents unclipped SwiftUI drop shadows)
 
@@ -64,6 +69,8 @@ final class LazyNotchWindowController {
     private var holdOpenUntil: Date?
     private var lastDragChangeCount: Int = NSPasteboard(name: .drag).changeCount
     private var isGlobalDragActive: Bool = false
+    private var isSystemDragInProgress: Bool = false
+    private var wasExpandedByDrag: Bool = false
 
     private var cancellables = Set<AnyCancellable>()
 
@@ -85,10 +92,23 @@ final class LazyNotchWindowController {
                 self?.handleSpaceChange()
             }
         }
+        let updateLiveActivity = { [weak self] in
+            let showLiveMedia = UserDefaults.standard.object(forKey: "showLiveMediaActivity") as? Bool ?? true
+            let isPlaying = MediaService.shared.currentTrack?.isPlaying == true
+            self?.viewModel.hasActiveLiveActivity = showLiveMedia && isPlaying
+        }
+
         MediaService.shared.$currentTrack
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] track in
-                self?.viewModel.hasActiveLiveActivity = (track?.isPlaying == true)
+            .sink { _ in
+                updateLiveActivity()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: UserDefaults.didChangeNotification)
+            .receive(on: DispatchQueue.main)
+            .sink { _ in
+                updateLiveActivity()
             }
             .store(in: &cancellables)
 
@@ -220,11 +240,13 @@ final class LazyNotchWindowController {
         if hotZoneRect().contains(mouse) { return true }
         guard viewModel.isExpanded, let display = displayCoordinator.primaryDisplay else { return false }
         let frame = display.screen.frame
+        let currentWidth = viewModel.globalDragZone != .none ? Self.dropHUDWidth : Self.openWidth
+        let currentHeight = viewModel.globalDragZone != .none ? Self.dropHUDHeight : Self.openHeight
         let contentRect = CGRect(
-            x: frame.midX - Self.openWidth / 2,
-            y: frame.maxY - Self.openHeight,
-            width: Self.openWidth,
-            height: Self.openHeight
+            x: frame.midX - currentWidth / 2,
+            y: frame.maxY - currentHeight,
+            width: currentWidth,
+            height: currentHeight
         )
         return contentRect.insetBy(dx: -8, dy: -4).contains(mouse)
     }
@@ -233,7 +255,14 @@ final class LazyNotchWindowController {
     private func activeNotchScreenRect() -> CGRect {
         guard let display = displayCoordinator.primaryDisplay else { return .null }
         let frame = display.screen.frame
-        if viewModel.isExpanded {
+        if viewModel.globalDragZone != .none {
+            return CGRect(
+                x: frame.midX - Self.dropHUDWidth / 2,
+                y: frame.maxY - Self.dropHUDHeight,
+                width: Self.dropHUDWidth,
+                height: Self.dropHUDHeight
+            )
+        } else if viewModel.isExpanded {
             let width = Self.openWidth
             let height = Self.openHeight
             return CGRect(
@@ -275,12 +304,32 @@ final class LazyNotchWindowController {
     private func expandedInteractiveRect() -> CGRect? {
         guard let display = displayCoordinator.primaryDisplay else { return nil }
         let frame = display.screen.frame
+        let currentWidth = viewModel.globalDragZone != .none ? Self.dropHUDWidth : Self.openWidth
+        let currentHeight = viewModel.globalDragZone != .none ? Self.dropHUDHeight : Self.openHeight
         return CGRect(
-            x: frame.midX - Self.openWidth / 2,
-            y: frame.maxY - Self.openHeight,
-            width: Self.openWidth,
-            height: Self.openHeight
+            x: frame.midX - currentWidth / 2,
+            y: frame.maxY - currentHeight,
+            width: currentWidth,
+            height: currentHeight
         )
+    }
+
+    /// Check if cursor is in the approach zone of the notch during a drag.
+    private func isMouseInDragApproachZone(mouse: NSPoint) -> Bool {
+        guard let display = displayCoordinator.primaryDisplay else { return false }
+        let frame = display.screen.frame
+
+        // Horizontal trigger zone: centered on notch
+        let triggerWidth: CGFloat = Self.dropHUDWidth + 40
+        let minX = frame.midX - triggerWidth / 2
+        let maxX = frame.midX + triggerWidth / 2
+        guard mouse.x >= minX && mouse.x <= maxX else { return false }
+
+        // Vertical trigger zone: near the top edge of screen
+        let triggerHeight: CGFloat = (viewModel.isExpanded || viewModel.globalDragZone != .none) ? (Self.dropHUDHeight + 50) : 80
+        let minY = frame.maxY - triggerHeight
+        let maxY = frame.maxY + 10
+        return mouse.y >= minY && mouse.y <= maxY
     }
 
     /// Window Server–level click-through. Returning `nil` from ShellHostingView.hitTest
@@ -295,6 +344,9 @@ final class LazyNotchWindowController {
         let interactive: Bool
         if isGlobalDragActive {
             interactive = true
+        } else if isSystemDragInProgress {
+            // Drag is in progress far away from the notch — pass through everywhere
+            interactive = false
         } else if viewModel.isExpanded {
             interactive = expandedInteractiveRect()?.contains(mouse) ?? false
         } else {
@@ -305,37 +357,82 @@ final class LazyNotchWindowController {
     }
 
     private func pollCursor() {
+        let mouse = NSEvent.mouseLocation
         let currentDragCount = NSPasteboard(name: .drag).changeCount
+
         if currentDragCount != lastDragChangeCount {
             lastDragChangeCount = currentDragCount
             if NSEvent.pressedMouseButtons != 0 {
+                isSystemDragInProgress = true
+            }
+        }
+
+        if isSystemDragInProgress && NSEvent.pressedMouseButtons == 0 {
+            isSystemDragInProgress = false
+            isGlobalDragActive = false
+            if viewModel.globalDragZone != .none {
+                withAnimation(LazyNotchMotion.interactiveSpring) {
+                    viewModel.globalDragZone = .none
+                }
+            }
+            if wasExpandedByDrag {
+                wasExpandedByDrag = false
+                collapse()
+            }
+        }
+
+        if isSystemDragInProgress {
+            let nearNotch = isMouseInDragApproachZone(mouse: mouse)
+            if nearNotch {
                 isGlobalDragActive = true
-                if viewModel.globalDragZone == .none {
-                    withAnimation(LazyNotchMotion.interactiveSpring) { viewModel.globalDragZone = .tray }
+                if !viewModel.isExpanded {
+                    wasExpandedByDrag = true
+                    expand()
+                }
+                if let display = displayCoordinator.primaryDisplay {
+                    let midX = display.screen.frame.midX
+                    let targetZone: GlobalDragZone = mouse.x < midX ? .tray : .airdrop
+                    if viewModel.globalDragZone != targetZone {
+                        withAnimation(LazyNotchMotion.interactiveSpring) {
+                            viewModel.globalDragZone = targetZone
+                        }
+                    }
+                }
+            } else {
+                isGlobalDragActive = false
+                if viewModel.globalDragZone != .none {
+                    withAnimation(LazyNotchMotion.interactiveSpring) {
+                        viewModel.globalDragZone = .none
+                    }
+                }
+                if wasExpandedByDrag && viewModel.isExpanded {
+                    wasExpandedByDrag = false
+                    collapse()
                 }
             }
         }
-        
-        if isGlobalDragActive && NSEvent.pressedMouseButtons == 0 {
-            isGlobalDragActive = false
-            withAnimation(LazyNotchMotion.interactiveSpring) { viewModel.globalDragZone = .none }
-        }
 
-        let engaged = cursorIsEngaged() || isGlobalDragActive
+        let engaged = (cursorIsEngaged() && !isSystemDragInProgress) || isGlobalDragActive
         updateMousePassThrough()
+
         if viewModel.isHovered != engaged {
-            withAnimation(LazyNotchMotion.hoverSpring) {
-                viewModel.isHovered = engaged
-            }
+            viewModel.isHovered = engaged
         }
 
         if engaged {
             leaveArmedAt = nil
             if !viewModel.isExpanded {
-                if let armed = enterArmedAt, Date().timeIntervalSince(armed) >= Self.hoverEnterGrace {
+                let openOnHover = UserDefaults.standard.object(forKey: "openOnHover") as? Bool ?? true
+                let canAutoExpand = openOnHover && !viewModel.hasActiveLiveActivity
+                if isGlobalDragActive {
+                    wasExpandedByDrag = true
                     expand()
-                } else if enterArmedAt == nil {
-                    enterArmedAt = Date()
+                } else if canAutoExpand {
+                    if let armed = enterArmedAt, Date().timeIntervalSince(armed) >= Self.hoverEnterGrace {
+                        expand()
+                    } else if enterArmedAt == nil {
+                        enterArmedAt = Date()
+                    }
                 }
             }
         } else {
@@ -343,7 +440,8 @@ final class LazyNotchWindowController {
             // Hold the island open while a hold-open request is active (file picker / post-staging feedback).
             let isHeldOpen = Date() < (holdOpenUntil ?? .distantPast)
             if viewModel.isExpanded, !isHeldOpen {
-                if let armed = leaveArmedAt, Date().timeIntervalSince(armed) >= Self.hoverLeaveGrace {
+                let leaveGrace = UserDefaults.standard.object(forKey: "hoverGraceDuration") as? Double ?? Self.hoverLeaveGrace
+                if let armed = leaveArmedAt, Date().timeIntervalSince(armed) >= leaveGrace {
                     collapse()
                 } else if leaveArmedAt == nil {
                     leaveArmedAt = Date()

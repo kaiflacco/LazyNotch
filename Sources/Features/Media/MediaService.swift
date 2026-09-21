@@ -14,6 +14,8 @@ public final class MediaService: ObservableObject {
     private var pollTimer: Timer?
     private var notificationObservers: [NSObjectProtocol] = []
     private var lastArtworkUrl: String?
+    private var refreshTask: Task<Void, Never>?
+    private var currentRefreshID: UInt64 = 0
 
     public init() {
         startMonitoring()
@@ -58,23 +60,31 @@ public final class MediaService: ObservableObject {
     }
 
     public func refreshTrack() {
-        Task.detached(priority: .userInitiated) {
-            let track = Self.fetchCurrentTrack()
-            await MainActor.run {
-                self.currentTrack = track
-                self.isAvailable = track != nil
-                
-                if track?.artworkUrl != self.lastArtworkUrl {
-                    self.lastArtworkUrl = track?.artworkUrl
-                    if let urlStr = track?.artworkUrl, let url = URL(string: urlStr) {
-                        Task {
-                            if let (data, _) = try? await URLSession.shared.data(from: url), let img = NSImage(data: data) {
-                                await MainActor.run { self.cachedArtwork = img }
-                            }
-                        }
-                    } else {
-                        self.cachedArtwork = nil
-                    }
+        refreshTask?.cancel()
+        currentRefreshID &+= 1
+        let refreshID = currentRefreshID
+
+        refreshTask = Task { [weak self] in
+            let track = await Task.detached(priority: .userInitiated) {
+                Self.fetchCurrentTrack()
+            }.value
+
+            guard !Task.isCancelled, let self = self, self.currentRefreshID == refreshID else { return }
+
+            self.currentTrack = track
+            self.isAvailable = track != nil
+
+            if track?.artworkUrl != self.lastArtworkUrl {
+                self.lastArtworkUrl = track?.artworkUrl
+                if let urlStr = track?.artworkUrl, let url = URL(string: urlStr) {
+                    let image = await Task.detached(priority: .userInitiated) { () -> NSImage? in
+                        guard let (data, _) = try? await URLSession.shared.data(from: url) else { return nil }
+                        return NSImage(data: data)
+                    }.value
+                    guard !Task.isCancelled, self.currentRefreshID == refreshID else { return }
+                    self.cachedArtwork = image
+                } else {
+                    self.cachedArtwork = nil
                 }
             }
         }
@@ -85,32 +95,28 @@ public final class MediaService: ObservableObject {
     public func togglePlayPause() {
         guard let track = currentTrack else { return }
         let app = track.appName == "Spotify" ? "Spotify" : "Music"
-        Task.detached(priority: .userInitiated) {
-            let script = "tell application \"\(app)\" to playpause"
-            var error: NSDictionary?
-            NSAppleScript(source: script)?.executeAndReturnError(&error)
-            
-            try? await Task.sleep(nanoseconds: 100_000_000)
-            let updated = Self.fetchCurrentTrack()
-            await MainActor.run {
-                self.currentTrack = updated
-            }
+        Task {
+            await Task.detached(priority: .userInitiated) {
+                let script = "tell application \"\(app)\" to playpause"
+                var error: NSDictionary?
+                NSAppleScript(source: script)?.executeAndReturnError(&error)
+                try? await Task.sleep(nanoseconds: 100_000_000)
+            }.value
+            self.refreshTrack()
         }
     }
 
     public func nextTrack() {
         guard let track = currentTrack else { return }
         let app = track.appName == "Spotify" ? "Spotify" : "Music"
-        Task.detached(priority: .userInitiated) {
-            let script = "tell application \"\(app)\" to next track"
-            var error: NSDictionary?
-            NSAppleScript(source: script)?.executeAndReturnError(&error)
-            
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            let updated = Self.fetchCurrentTrack()
-            await MainActor.run {
-                self.currentTrack = updated
-            }
+        Task {
+            await Task.detached(priority: .userInitiated) {
+                let script = "tell application \"\(app)\" to next track"
+                var error: NSDictionary?
+                NSAppleScript(source: script)?.executeAndReturnError(&error)
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }.value
+            self.refreshTrack()
         }
     }
 
@@ -146,16 +152,14 @@ public final class MediaService: ObservableObject {
     public func previousTrack() {
         guard let track = currentTrack else { return }
         let app = track.appName == "Spotify" ? "Spotify" : "Music"
-        Task.detached(priority: .userInitiated) {
-            let script = "tell application \"\(app)\" to previous track"
-            var error: NSDictionary?
-            NSAppleScript(source: script)?.executeAndReturnError(&error)
-            
-            try? await Task.sleep(nanoseconds: 150_000_000)
-            let updated = Self.fetchCurrentTrack()
-            await MainActor.run {
-                self.currentTrack = updated
-            }
+        Task {
+            await Task.detached(priority: .userInitiated) {
+                let script = "tell application \"\(app)\" to previous track"
+                var error: NSDictionary?
+                NSAppleScript(source: script)?.executeAndReturnError(&error)
+                try? await Task.sleep(nanoseconds: 150_000_000)
+            }.value
+            self.refreshTrack()
         }
     }
 

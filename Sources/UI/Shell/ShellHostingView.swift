@@ -16,8 +16,10 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         guard let viewModel else { return [] }
-        withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
-            viewModel.isExpanded = true
+        if !viewModel.isExpanded {
+            withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
+                viewModel.isExpanded = true
+            }
         }
         updateDragZone(for: sender)
         return .copy
@@ -33,14 +35,17 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
         updateDragZone(for: sender)
         
         let point = convert(sender.draggingLocation, from: nil)
-        let islandY = isFlipped ? 0 : (bounds.height - LazyNotchWindowController.openHeight)
+        let hudWidth = LazyNotchWindowController.dropHUDWidth
+        let hudHeight = LazyNotchWindowController.dropHUDHeight
+        let islandY = isFlipped ? 0 : (bounds.height - hudHeight)
         let islandRect = NSRect(
-            x: (bounds.width - LazyNotchWindowController.openWidth) / 2,
+            x: (bounds.width - hudWidth) / 2,
             y: islandY,
-            width: LazyNotchWindowController.openWidth,
-            height: LazyNotchWindowController.openHeight
+            width: hudWidth,
+            height: hudHeight
         )
-        return islandRect.contains(point) ? .copy : []
+        let hitRect = islandRect.insetBy(dx: -25, dy: -25)
+        return hitRect.contains(point) ? .copy : []
     }
 
     override func draggingExited(_ sender: (any NSDraggingInfo)?) {
@@ -54,54 +59,89 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
         guard let viewModel else { return }
         let point = convert(sender.draggingLocation, from: nil)
         
-        let islandY = isFlipped ? 0 : (bounds.height - LazyNotchWindowController.openHeight)
+        let hudWidth = LazyNotchWindowController.dropHUDWidth
+        let hudHeight = LazyNotchWindowController.dropHUDHeight
+        let islandY = isFlipped ? 0 : (bounds.height - hudHeight)
         let islandRect = NSRect(
-            x: (bounds.width - LazyNotchWindowController.openWidth) / 2,
+            x: (bounds.width - hudWidth) / 2,
             y: islandY,
-            width: LazyNotchWindowController.openWidth,
-            height: LazyNotchWindowController.openHeight
+            width: hudWidth,
+            height: hudHeight
         )
         
-        if islandRect.contains(point) {
+        let hitRect = islandRect.insetBy(dx: -25, dy: -25)
+        if hitRect.contains(point) {
             let targetZone: GlobalDragZone = point.x < islandRect.midX ? .tray : .airdrop
             if viewModel.globalDragZone != targetZone {
                 withAnimation(LazyNotchMotion.interactiveSpring) {
                     viewModel.globalDragZone = targetZone
                 }
             }
-        } else {
-            if viewModel.globalDragZone == .none {
-                withAnimation(LazyNotchMotion.interactiveSpring) {
-                    viewModel.globalDragZone = .tray
-                }
-            }
         }
     }
 
-    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        guard let pasteboard = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: nil) as? [URL], let viewModel = viewModel else {
-            return false
+    private func extractURLs(from pasteboard: NSPasteboard) -> [URL] {
+        var urls: [URL] = []
+        if let direct = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !direct.isEmpty {
+            urls.append(contentsOf: direct)
         }
+        if urls.isEmpty, let files = pasteboard.propertyList(forType: .init("NSFilenamesPboardType")) as? [String] {
+            urls.append(contentsOf: files.map { URL(fileURLWithPath: $0) })
+        }
+        if urls.isEmpty, let items = pasteboard.pasteboardItems {
+            for item in items {
+                if let string = item.string(forType: .fileURL), let url = URL(string: string) {
+                    urls.append(url)
+                } else if let string = item.string(forType: .init("public.file-url")), let url = URL(string: string) {
+                    urls.append(url)
+                }
+            }
+        }
+        var seen = Set<String>()
+        return urls.filter { seen.insert($0.standardizedFileURL.path).inserted }
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        guard let viewModel = viewModel else { return false }
+        let urls = extractURLs(from: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
         
         let point = convert(sender.draggingLocation, from: nil)
-        let islandY = isFlipped ? 0 : (bounds.height - LazyNotchWindowController.openHeight)
+        let hudWidth = LazyNotchWindowController.dropHUDWidth
+        let hudHeight = LazyNotchWindowController.dropHUDHeight
+        let islandY = isFlipped ? 0 : (bounds.height - hudHeight)
         let islandRect = NSRect(
-            x: (bounds.width - LazyNotchWindowController.openWidth) / 2,
+            x: (bounds.width - hudWidth) / 2,
             y: islandY,
-            width: LazyNotchWindowController.openWidth,
-            height: LazyNotchWindowController.openHeight
+            width: hudWidth,
+            height: hudHeight
         )
+        let hitRect = islandRect.insetBy(dx: -30, dy: -30)
+        guard hitRect.contains(point) else { return false }
         
-        guard islandRect.contains(point) else { return false }
+        let dropZone: GlobalDragZone = point.x < islandRect.midX ? .tray : .airdrop
         
-        if viewModel.globalDragZone == .airdrop {
-            NSSharingService(named: .sendViaAirDrop)?.perform(withItems: pasteboard)
+        NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
+        
+        if dropZone == .airdrop {
+            withAnimation(LazyNotchMotion.interactiveSpring) {
+                viewModel.globalDragZone = .none
+                viewModel.isExpanded = false
+            }
+            DispatchQueue.main.async {
+                NSSharingService(named: .sendViaAirDrop)?.perform(withItems: urls)
+            }
         } else {
-            LazyShelfStore.shared.add(urls: pasteboard)
-        }
-        
-        withAnimation(LazyNotchMotion.interactiveSpring) {
-            viewModel.globalDragZone = .none
+            LazyShelfStore.shared.add(urls: urls)
+            withAnimation(LazyNotchMotion.interactiveSpring) {
+                viewModel.globalDragZone = .none
+                viewModel.activeTab = .shelf
+            }
+            NotificationCenter.default.post(
+                name: NSNotification.Name("LazyNotchHoldOpenTrayRequest"),
+                object: nil,
+                userInfo: ["seconds": 5.0]
+            )
         }
         return true
     }
@@ -117,10 +157,20 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let viewModel else { return nil }
 
-        // Convert point from superview (unflipped AppKit window coordinates) to local flipped view coordinates
         let localPoint = convert(point, from: superview)
 
-        if viewModel.isExpanded {
+        if viewModel.globalDragZone != .none {
+            let activeWidth = LazyNotchWindowController.dropHUDWidth
+            let activeHeight = LazyNotchWindowController.dropHUDHeight
+            let notchBounds = NSRect(
+                x: (bounds.width - activeWidth) / 2,
+                y: 0,
+                width: activeWidth,
+                height: activeHeight
+            )
+            guard notchBounds.contains(localPoint) else { return nil }
+            return super.hitTest(point) ?? self
+        } else if viewModel.isExpanded {
             let activeWidth = LazyNotchWindowController.openWidth
             let activeHeight = LazyNotchWindowController.openHeight
             let notchBounds = NSRect(

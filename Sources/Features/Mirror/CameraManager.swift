@@ -10,15 +10,26 @@ private final class CaptureSessionWorker: NSObject, AVCaptureVideoDataOutputSamp
     private var isConfigured = false
     
     // Background state
-    var currentEffect: MirrorEffect = .normal
+    private var _currentEffect: MirrorEffect = .normal
+    private let effectLock = NSLock()
+    var currentEffect: MirrorEffect {
+        get {
+            effectLock.withLock { _currentEffect }
+        }
+        set {
+            effectLock.withLock { _currentEffect = newValue }
+        }
+    }
     private let effectEngine = MirrorEffectEngine()
     
-    var onFrame: ((CGImage) -> Void)?
+    var onFrame: (@MainActor @Sendable (CGImage) -> Void)?
 
-    func configure(completion: @escaping @Sendable (Bool, String?) -> Void) {
+    func configure(completion: @escaping @MainActor @Sendable (Bool, String?) -> Void) {
         queue.async {
             if self.isConfigured {
-                completion(true, nil)
+                Task { @MainActor in
+                    completion(true, nil)
+                }
                 return
             }
 
@@ -28,7 +39,9 @@ private final class CaptureSessionWorker: NSObject, AVCaptureVideoDataOutputSamp
             guard let device = AVCaptureDevice.default(.builtInWideAngleCamera, for: .video, position: .front) ??
                                AVCaptureDevice.default(for: .video) else {
                 self.session.commitConfiguration()
-                completion(false, "No camera found on this Mac.")
+                Task { @MainActor in
+                    completion(false, "No camera found on this Mac.")
+                }
                 return
             }
 
@@ -51,37 +64,49 @@ private final class CaptureSessionWorker: NSObject, AVCaptureVideoDataOutputSamp
                 
                 self.isConfigured = true
                 self.session.commitConfiguration()
-                completion(true, nil)
+                Task { @MainActor in
+                    completion(true, nil)
+                }
             } catch {
                 self.session.commitConfiguration()
-                completion(false, error.localizedDescription)
+                Task { @MainActor in
+                    completion(false, error.localizedDescription)
+                }
             }
         }
     }
     func captureOutput(_ output: AVCaptureOutput, didOutput sampleBuffer: CMSampleBuffer, from connection: AVCaptureConnection) {
         let effect = self.currentEffect
         if let cgImage = self.effectEngine.process(sampleBuffer: sampleBuffer, effect: effect) {
-            onFrame?(cgImage)
+            Task { @MainActor [weak self] in
+                self?.onFrame?(cgImage)
+            }
         } else {
             print("LAZYNOTCH: effectEngine returned nil")
         }
     }
 
-    func start(completion: @escaping @Sendable (Bool) -> Void) {
+    func start(completion: @escaping @MainActor @Sendable (Bool) -> Void) {
         queue.async {
             if !self.session.isRunning {
                 self.session.startRunning()
             }
-            completion(self.session.isRunning)
+            let running = self.session.isRunning
+            Task { @MainActor in
+                completion(running)
+            }
         }
     }
 
-    func stop(completion: @escaping @Sendable (Bool) -> Void) {
+    func stop(completion: @escaping @MainActor @Sendable (Bool) -> Void) {
         queue.async {
             if self.session.isRunning {
                 self.session.stopRunning()
             }
-            completion(self.session.isRunning)
+            let running = self.session.isRunning
+            Task { @MainActor in
+                completion(running)
+            }
         }
     }
 }
@@ -135,42 +160,64 @@ public final class CameraManager: ObservableObject {
             self.hasPermission = true
             self.errorMessage = nil
         case .notDetermined:
-            AVCaptureDevice.requestAccess(for: .video) { granted in
-                Task { @MainActor in
-                    self.hasPermission = granted
-                }
-            }
+            self.hasPermission = false
+            self.errorMessage = nil
         default:
             self.hasPermission = false
             self.errorMessage = "Camera access denied. Enable in System Settings > Privacy & Security > Camera."
         }
     }
 
+    public func requestAccess(completion: (@MainActor @Sendable (Bool) -> Void)? = nil) {
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        switch status {
+        case .authorized:
+            self.hasPermission = true
+            self.errorMessage = nil
+            completion?(true)
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .video) { granted in
+                Task { @MainActor in
+                    self.hasPermission = granted
+                    self.errorMessage = granted ? nil : "Camera access denied. Enable in System Settings > Privacy & Security > Camera."
+                    completion?(granted)
+                }
+            }
+        default:
+            self.hasPermission = false
+            self.errorMessage = "Camera access denied. Enable in System Settings > Privacy & Security > Camera."
+            completion?(false)
+        }
+    }
+
     public func start() {
-        guard hasPermission else {
-            checkPermission()
+        let status = AVCaptureDevice.authorizationStatus(for: .video)
+        guard status == .authorized else {
+            if status == .notDetermined {
+                requestAccess { [weak self] granted in
+                    if granted {
+                        self?.start()
+                    }
+                }
+            } else {
+                checkPermission()
+            }
             return
         }
 
         worker.configure { [weak self] success, error in
             guard let self = self else { return }
             if !success {
-                Task { @MainActor in
-                    self.errorMessage = error
-                }
+                self.errorMessage = error
                 return
             }
 
-            self.worker.start { isRunning in
-                Task { @MainActor in
-                    self.isRunning = isRunning
-                }
+            self.worker.onFrame = { [weak self] cgImage in
+                self?.currentFrame = cgImage
             }
-            
-            self.worker.onFrame = { cgImage in
-                Task { @MainActor in
-                    CameraManager.shared.currentFrame = cgImage
-                }
+
+            self.worker.start { [weak self] isRunning in
+                self?.isRunning = isRunning
             }
         }
     }
@@ -178,9 +225,9 @@ public final class CameraManager: ObservableObject {
     public func stop() {
         worker.stop { [weak self] isRunning in
             guard let self = self else { return }
-            Task { @MainActor in
-                self.isRunning = isRunning
-            }
+            self.isRunning = isRunning
+            self.worker.onFrame = nil
+            self.currentFrame = nil
         }
     }
 }

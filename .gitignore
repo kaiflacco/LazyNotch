@@ -42,3 +42,8 @@ main
 # Sensitive / local configuration
 *.env
 .secrets
+
+# Screen recordings / media
+screenrecording/
+*.mov
+*.mp4

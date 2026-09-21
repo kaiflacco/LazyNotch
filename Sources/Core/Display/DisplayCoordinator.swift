@@ -63,8 +63,13 @@ final class DisplayCoordinator {
     }
 
     /// React to display changes (connect/disconnect, resolution, sleep/wake).
+    ///
+    /// NOTE: `NSApplication.didChangeScreenParametersNotification` is posted to the
+    /// app's DEFAULT notification center — not `NSWorkspace.shared.notificationCenter`.
+    /// Observing it on the workspace center silently never fires, which previously
+    /// left the shell stuck at stale geometry after display changes.
     func observeChanges(_ handler: @escaping @Sendable () -> Void) -> NSObjectProtocol {
-        NSWorkspace.shared.notificationCenter.addObserver(
+        NotificationCenter.default.addObserver(
             forName: NSApplication.didChangeScreenParametersNotification,
             object: nil,
             queue: .main

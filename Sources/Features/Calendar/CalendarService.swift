@@ -36,6 +36,11 @@ public final class CalendarService: ObservableObject {
     
     public static func dayKey(for date: Date) -> String {
         let formatter = DateFormatter()
+        // Pin locale + calendar so the key is stable regardless of the user's
+        // calendar (e.g. a non-Gregorian user calendar would shift "yyyy")
+        // and regardless of 12/24-hour or digit-system locale settings.
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: date)
     }
@@ -225,6 +230,14 @@ public final class CalendarService: ObservableObject {
         
         let todayKey = Self.dayKey(for: today)
         let todayEvents = grouped[todayKey] ?? []
-        self.nextEvent = todayEvents.first(where: { $0.endDate >= today }) ?? todayEvents.first
+        // Prefer the soonest event that hasn't ended yet across the whole fetched
+        // window (-4…+4 days). Previously this only considered TODAY's events, so
+        // once the day's last meeting ended the widget went blank even though
+        // tomorrow's events were already fetched and cached in `weekEvents`.
+        let upcoming = grouped.values
+            .flatMap { $0 }
+            .filter { $0.endDate >= today }
+            .min { $0.startDate < $1.startDate }
+        self.nextEvent = upcoming ?? todayEvents.first
     }
 }

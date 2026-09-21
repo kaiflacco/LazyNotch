@@ -10,12 +10,12 @@ public enum LazyNotchMotion {
     // MARK: - Core Spring Constants
 
     /// NotchNook / Dynamic Island opening spring: Fluid organic drop-down expansion (~360ms settle).
-    public static let openResponse: Double = 0.38
-    public static let openDamping: Double = 0.70
+    public static let openResponse: Double = 0.45
+    public static let openDamping: Double = 0.60 // More bounce
 
     /// Closing spring: Crisp contraction into the notch (~250ms), clean settling.
-    public static let closeResponse: Double = 0.28
-    public static let closeDamping: Double = 0.84
+    public static let closeResponse: Double = 0.35
+    public static let closeDamping: Double = 0.85
 
     /// Content choreography spring: Slides down smoothly from the notch opening.
     public static let contentResponse: Double = 0.32
