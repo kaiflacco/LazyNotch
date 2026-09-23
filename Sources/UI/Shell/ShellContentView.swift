@@ -644,16 +644,7 @@ struct ExpandedNotchContent: View {
     }
 
     var body: some View {
-        VStack(spacing: 2) {
-            TopBar(
-                selectedTab: $selectedTab,
-                viewModel: viewModel,
-                showsCodexDetails: $viewModel.showsCodexDetails
-            )
-                .padding(.top, 12)
-                .padding(.horizontal, 36)
-                .morphReveal(progress)
-
+        ZStack(alignment: .top) {
             Group {
                 switch selectedTab {
                 case .home:
@@ -668,10 +659,19 @@ struct ExpandedNotchContent: View {
                         .morphReveal(progress)
                 }
             }
-            .frame(maxHeight: .infinity)
             .padding(.horizontal, 36)
-            .padding(.top, 4)
+            .padding(.top, 44)
             .padding(.bottom, 16)
+
+            TopBar(
+                selectedTab: $selectedTab,
+                viewModel: viewModel,
+                showsCodexDetails: $viewModel.showsCodexDetails
+            )
+            .frame(height: 26, alignment: .top)
+            .padding(.top, 12)
+            .padding(.horizontal, 36)
+            .morphReveal(progress)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .transition(.opacity)
