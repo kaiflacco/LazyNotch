@@ -300,7 +300,7 @@ struct MorphingNotchIsland: View {
             )
         )
         .onTapGesture {
-            if !viewModel.isExpanded && !viewModel.isActivityContentVisible {
+            if !viewModel.isExpanded {
                 withAnimation(
                     reduceMotion
                         ? .easeOut(duration: 0.16)

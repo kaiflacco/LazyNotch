@@ -1,3 +1,4 @@
+import AppKit
 import XCTest
 @testable import LazyNotch
 
@@ -86,5 +87,21 @@ final class ShellViewModelTests: XCTestCase {
         XCTAssertEqual(window?.remainingPercent, 0)
         XCTAssertEqual(window?.durationMinutes, 300)
         XCTAssertEqual(window?.resetsAt, Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    func testCollapsedLiveActivityHitRegionReachesHostingView() {
+        let viewModel = ShellViewModel()
+        viewModel.compactSize = CGSize(width: 200, height: 32)
+        viewModel.hasActiveLiveActivity = true
+
+        let hostingView = ShellHostingView(rootView: ShellContentView(viewModel: viewModel))
+        hostingView.viewModel = viewModel
+        hostingView.frame = NSRect(x: 0, y: 0, width: 770, height: 380)
+        hostingView.layoutSubtreeIfNeeded()
+
+        XCTAssertTrue(hostingView.isFlipped)
+        XCTAssertEqual(hostingView.bounds.size, CGSize(width: 770, height: 380))
+        XCTAssertTrue(viewModel.isActivityContentVisible)
+        XCTAssertNotNil(hostingView.hitTest(NSPoint(x: hostingView.bounds.midX, y: 16)))
     }
 }
