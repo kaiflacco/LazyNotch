@@ -1,45 +1,49 @@
 import AppKit
+import QuickLookThumbnailing
 import SwiftUI
 import UniformTypeIdentifiers
 
-private enum ShelfSiriColors {
+private enum ShelfVisuals {
     static let cyan = Color(red: 0.00, green: 0.88, blue: 0.96)
-    static let azure = Color(red: 0.10, green: 0.52, blue: 1.00)
+    static let blue = Color(red: 0.10, green: 0.52, blue: 1.00)
     static let purple = Color(red: 0.62, green: 0.26, blue: 0.98)
-    static let magenta = Color(red: 1.00, green: 0.18, blue: 0.68)
-    static let coral = Color(red: 1.00, green: 0.46, blue: 0.28)
+    static let pink = Color(red: 1.00, green: 0.18, blue: 0.68)
 
-    static var fullGradient: LinearGradient {
-        LinearGradient(
-            colors: [cyan, azure, purple, magenta, coral],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    static var horizontalGradient: LinearGradient {
-        LinearGradient(
-            colors: [cyan, azure, purple, magenta, coral],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
+    static var glow: LinearGradient {
+        LinearGradient(colors: [cyan, blue, purple, pink], startPoint: .topLeading, endPoint: .bottomTrailing)
     }
 }
 
-/// The LazyShelf view inside LazyNotch.
-/// Stages files for temporary holding, QuickLook inspection, and drag-and-drop into target apps.
+private enum ShelfDrag {
+    static let type = UTType(exportedAs: "com.lazynotch.shelf-items")
+
+    static func provider(for item: LazyShelfItem) -> NSItemProvider {
+        let provider = NSItemProvider(contentsOf: item.url) ?? NSItemProvider(object: item.url as NSURL)
+        let itemID = item.id.uuidString
+        provider.registerDataRepresentation(
+            forTypeIdentifier: type.identifier,
+            visibility: .ownProcess
+        ) { completion in
+            completion(Data(itemID.utf8), nil)
+            return nil
+        }
+        return provider
+    }
+}
+
+/// Stages files for temporary holding, Quick Look inspection, reordering, and AirDrop.
 public struct LazyShelfView: View {
     @ObservedObject var store = LazyShelfStore.shared
-    @State private var isTargeted: Bool = false
+    @State private var isShelfTargeted = false
+    @State private var keyMonitor: Any?
 
     /// Process-wide guard: only one NSOpenPanel may be shown at a time.
-    /// Static because @State copies wouldn't be visible inside the panel's completion closure.
     private static var isPanelActive = false
 
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 6) {
+        Group {
             if store.items.isEmpty {
                 emptyDropTarget
             } else {
@@ -47,23 +51,148 @@ public struct LazyShelfView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onDrop(of: [UTType.fileURL.identifier, UTType.item.identifier], isTargeted: $isTargeted) { providers in
-            handleDrop(providers: providers)
+        .contentShape(Rectangle())
+        .onAppear(perform: installKeyboardMonitor)
+        .onDisappear(perform: removeKeyboardMonitor)
+        .onDrop(
+            of: [UTType.fileURL.identifier, UTType.item.identifier],
+            isTargeted: $isShelfTargeted,
+            perform: stageDroppedFiles
+        )
+    }
+
+    private var emptyDropTarget: some View {
+        ZStack {
+            if isShelfTargeted {
+                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                    .fill(ShelfVisuals.glow.opacity(0.18))
+                    .blur(radius: 10)
+            }
+
+            RoundedRectangle(cornerRadius: 18, style: .continuous)
+                .fill(Color.white.opacity(isShelfTargeted ? 0.07 : 0.025))
+                .overlay {
+                    if isShelfTargeted {
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .strokeBorder(
+                                ShelfVisuals.glow,
+                                style: StrokeStyle(lineWidth: 1.3, dash: [5, 4])
+                            )
+                    }
+                }
+
+            HStack(spacing: 9) {
+                Image(systemName: isShelfTargeted ? "arrow.down.circle.fill" : "tray.and.arrow.down")
+                    .font(.system(size: 18, weight: .medium))
+                    .foregroundStyle(isShelfTargeted ? AnyShapeStyle(ShelfVisuals.glow) : AnyShapeStyle(Color.white.opacity(0.45)))
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(isShelfTargeted ? "Release to add" : "Add to Lazy Shelf")
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(.white.opacity(isShelfTargeted ? 1 : 0.68))
+                    Text("Drop files or click to browse")
+                        .font(.system(size: 10, weight: .regular))
+                        .foregroundStyle(.white.opacity(0.34))
+                }
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            addFilesViaPanel()
+        }
+        .animation(LazyNotchMotion.interactiveSpring, value: isShelfTargeted)
+        .help("Click to browse for files, or drop them here")
+    }
+
+    private var stagedContent: some View {
+        VStack(spacing: 4) {
+            HStack(spacing: 5) {
+                Text("\(store.items.count)")
+                    .font(.system(size: 10, weight: .bold, design: .rounded))
+                    .foregroundStyle(.white.opacity(0.75))
+                Text(store.items.count == 1 ? "item staged" : "items staged")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.38))
+
+                Spacer()
+
+                Button("Clear All") {
+                    withAnimation(LazyNotchMotion.interactiveSpring) {
+                        store.clearAll()
+                    }
+                }
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.42))
+                .buttonStyle(.plain)
+            }
+            .padding(.horizontal, 2)
+
+            HStack(spacing: 8) {
+                AirDropDock(store: store)
+
+                Divider()
+                    .overlay(Color.white.opacity(0.08))
+                    .frame(height: 56)
+
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 8) {
+                            ForEach(store.items) { item in
+                                StagedItemCard(item: item, store: store)
+                                .id(item.id)
+                                .onDrop(
+                                    of: [ShelfDrag.type.identifier],
+                                    delegate: ShelfReorderDropDelegate(targetID: item.id, store: store)
+                                )
+                            }
+
+                            miniAddSlot
+                                .onDrop(
+                                    of: [ShelfDrag.type.identifier],
+                                    delegate: ShelfReorderDropDelegate(targetID: nil, store: store)
+                                )
+                        }
+                        .padding(.vertical, 2)
+                        .padding(.horizontal, 1)
+                        .animation(LazyNotchMotion.interactiveSpring, value: store.items.map(\.id))
+                    }
+                    .onChange(of: store.focusedItemID) { _, focusedID in
+                        guard let focusedID else { return }
+                        withAnimation(LazyNotchMotion.interactiveSpring) {
+                            proxy.scrollTo(focusedID, anchor: .center)
+                        }
+                    }
+                }
+            }
         }
     }
 
-    // MARK: - Add via File Picker
+    private var miniAddSlot: some View {
+        Button {
+            addFilesViaPanel()
+        } label: {
+            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .fill(Color.white.opacity(0.035))
+                .overlay {
+                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        .strokeBorder(Color.white.opacity(0.1), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
+                }
+                .overlay {
+                    Image(systemName: "plus")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white.opacity(0.38))
+                }
+                .frame(width: 56, height: 74)
+        }
+        .buttonStyle(.plain)
+        .help("Add files from disk")
+    }
 
-    /// Lets users stage files without dragging (the tray must be clickable, not drop-only).
-    /// The notch is held open on the Tray for the whole picker session and briefly after,
-    /// so it never hides while (or right after) the user is adding files.
     private func addFilesViaPanel() {
-        // Only one picker at a time; ignore rapid double-clicks / misclicks.
         guard !LazyShelfView.isPanelActive else { return }
         LazyShelfView.isPanelActive = true
 
         NSApp.activate(ignoringOtherApps: true)
-        // Keep the notch expanded while browsing the picker.
         NotificationCenter.default.post(
             name: NSNotification.Name("LazyNotchHoldOpenTrayRequest"),
             object: nil,
@@ -75,17 +204,14 @@ public struct LazyShelfView: View {
         panel.allowsMultipleSelection = true
         panel.canCreateDirectories = false
         panel.directoryURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
-        panel.message = "Choose files or folders to stage in the Tray"
+        panel.message = "Choose files or folders to stage in Lazy Shelf"
         panel.begin { response in
             defer { LazyShelfView.isPanelActive = false }
-            let urls = panel.urls
-            if response == .OK, !urls.isEmpty {
+            if response == .OK, !panel.urls.isEmpty {
                 withAnimation(LazyNotchMotion.interactiveSpring) {
-                    store.add(urls: urls)
+                    store.add(urls: panel.urls)
                 }
             }
-            // Re-show the tray with the freshly staged items, then resume normal
-            // hover behavior a few seconds later.
             NotificationCenter.default.post(
                 name: NSNotification.Name("LazyNotchHoldOpenTrayRequest"),
                 object: nil,
@@ -94,301 +220,301 @@ public struct LazyShelfView: View {
         }
     }
 
-    // MARK: - Empty Drop Target
-
-    private var emptyDropTarget: some View {
-        ZStack {
-            if isTargeted {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
-                    .fill(ShelfSiriColors.horizontalGradient)
-                    .blur(radius: 12)
-                    .opacity(0.25)
-            }
-
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(isTargeted ? Color.black.opacity(0.82) : Color.white.opacity(0.035))
-
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .strokeBorder(
-                    isTargeted
-                        ? AnyShapeStyle(ShelfSiriColors.horizontalGradient)
-                        : AnyShapeStyle(Color.white.opacity(0.12)),
-                    style: StrokeStyle(lineWidth: isTargeted ? 1.6 : 1.0, dash: [6, 4])
-                )
-                .animation(LazyNotchMotion.interactiveSpring, value: isTargeted)
-
-            VStack(spacing: 8) {
-                ZStack {
-                    Circle()
-                        .fill(
-                            isTargeted
-                                ? AnyShapeStyle(ShelfSiriColors.fullGradient.opacity(0.24))
-                                : AnyShapeStyle(Color.white.opacity(0.06))
-                        )
-                        .frame(width: 42, height: 42)
-                        .scaleEffect(isTargeted ? 1.08 : 1.0)
-
-                    Image(systemName: isTargeted ? "arrow.down.circle.fill" : "tray.and.arrow.down.fill")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(
-                            isTargeted
-                                ? AnyShapeStyle(ShelfSiriColors.horizontalGradient)
-                                : AnyShapeStyle(Color.white.opacity(0.55))
-                        )
-                        .scaleEffect(isTargeted ? 1.10 : 1.0)
-                }
-                .animation(LazyNotchMotion.interactiveSpring, value: isTargeted)
-
-                VStack(spacing: 2) {
-                    Text(isTargeted ? "Release to Stage Files" : "Drop files or click to browse")
-                        .font(.system(size: 12.5, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isTargeted ? Color.white : Color.white.opacity(0.60))
-
-                    if !isTargeted {
-                        Text("Instant staging • QuickLook • Drag anywhere")
-                            .font(.system(size: 10, weight: .regular))
-                            .foregroundStyle(Color.white.opacity(0.32))
-                    }
-                }
-                .animation(LazyNotchMotion.interactiveSpring, value: isTargeted)
-            }
+    private func stageDroppedFiles(_ providers: [NSItemProvider]) -> Bool {
+        if providers.contains(where: { $0.hasItemConformingToTypeIdentifier(ShelfDrag.type.identifier) }) {
+            store.endDragging()
+            return true
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .contentShape(Rectangle())
-        .onTapGesture {
-            addFilesViaPanel()
-        }
-        .padding(.bottom, 6)
-        .help("Click to browse for files, or drop them here")
-    }
-
-    // MARK: - Staged Content List
-
-    private var stagedContent: some View {
-        VStack(spacing: 4) {
-            HStack {
-                HStack(spacing: 5) {
-                    Text("\(store.items.count)")
-                        .font(.system(size: 10, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
-                        .frame(minWidth: 16, minHeight: 16)
-                        .padding(.horizontal, 5)
-                        .background(Capsule().fill(ShelfSiriColors.horizontalGradient))
-
-                    Text(store.items.count == 1 ? "item staged" : "items staged")
-                        .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.45))
-                }
-
-                Spacer()
-
-                Button("Clear All") {
-                    withAnimation(LazyNotchMotion.interactiveSpring) {
-                        store.clearAll()
-                    }
-                }
-                .font(.system(size: 10, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.40))
-                .buttonStyle(.plain)
-            }
-            .padding(.horizontal, 2)
-
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 8) {
-                    ForEach(store.items) { item in
-                        StagedItemCard(item: item)
-                    }
-
-                    miniDropSlot
-                }
-                .padding(.vertical, 2)
-                .padding(.horizontal, 2)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-
-    private var miniDropSlot: some View {
-        Button {
-            addFilesViaPanel()
-        } label: {
-            ZStack {
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(isTargeted ? 0.10 : 0.04))
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .strokeBorder(
-                        isTargeted
-                            ? AnyShapeStyle(ShelfSiriColors.horizontalGradient)
-                            : AnyShapeStyle(Color.white.opacity(0.12)),
-                        style: StrokeStyle(lineWidth: 1, dash: [4, 3])
-                    )
-                Image(systemName: "plus")
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(isTargeted ? AnyShapeStyle(ShelfSiriColors.horizontalGradient) : AnyShapeStyle(Color.white.opacity(0.4)))
-            }
-            .frame(width: 60, height: 72)
-        }
-        .buttonStyle(.plain)
-        .help("Add files from disk")
-    }
-
-    // MARK: - Drop Handling
-
-    private func handleDrop(providers: [NSItemProvider]) -> Bool {
-        var foundURLs: [URL] = []
-        let group = DispatchGroup()
-
-        for provider in providers {
-            group.enter()
-            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
-                // Finder drags reliably expose public.file-url as raw data;
-                // loadObject(ofClass: URL.self) is flaky with them.
-                _ = provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
-                    if let data, let url = URL(dataRepresentation: data, relativeTo: nil) {
-                        DispatchQueue.main.async {
-                            foundURLs.append(url)
-                            group.leave()
-                        }
-                    } else {
-                        group.leave()
-                    }
-                }
-            } else {
-                // Fallback for providers that expose a URL object (e.g. link drags).
-                _ = provider.loadObject(ofClass: URL.self) { url, _ in
-                    if let url {
-                        DispatchQueue.main.async {
-                            foundURLs.append(url)
-                            group.leave()
-                        }
-                    } else {
-                        group.leave()
-                    }
-                }
-            }
-        }
-
-        group.notify(queue: .main) {
-            if !foundURLs.isEmpty {
-                withAnimation(LazyNotchMotion.interactiveSpring) {
-                    store.add(urls: foundURLs)
-                }
+        loadFileURLs(from: providers) { urls in
+            guard !urls.isEmpty else { return }
+            withAnimation(LazyNotchMotion.interactiveSpring) {
+                store.add(urls: urls)
             }
         }
         return true
     }
+
+    private func installKeyboardMonitor() {
+        guard keyMonitor == nil else { return }
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let isShelfEvent = event.window?.contentView is ShellHostingView
+            guard isShelfEvent || store.previewItemURL != nil else { return event }
+
+            switch event.keyCode {
+            case 49: // Space
+                store.toggleQuickLookForFocusedItem()
+            case 123: // Left Arrow
+                store.moveFocus(by: -1)
+            case 124: // Right Arrow
+                store.moveFocus(by: 1)
+            case 53: // Escape
+                store.closeQuickLook()
+                store.clearSelection()
+            case 0 where event.modifierFlags.contains(.command): // Command-A
+                store.selectAll()
+            default:
+                return event
+            }
+            return nil
+        }
+    }
+
+    private func removeKeyboardMonitor() {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
+    }
 }
 
-// MARK: - Staged Item Card with Drag-Out & QuickLook
-
-struct StagedItemCard: View {
-    let item: LazyShelfItem
-    @ObservedObject var store = LazyShelfStore.shared
+private struct AirDropDock: View {
+    @ObservedObject var store: LazyShelfStore
+    @State private var isTargeted = false
     @State private var isHovered = false
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            VStack(spacing: 4) {
-                Image(nsImage: item.icon)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(width: 34, height: 34)
+        Button {
+            store.sendAllViaAirDrop()
+        } label: {
+            HStack(spacing: 8) {
+                icon
 
-                Text(item.name)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(Color.white)
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                    .frame(width: 68)
-
-                Text(item.sizeString)
-                    .font(.system(size: 9.5))
-                    .foregroundStyle(Color.white.opacity(0.5))
-            }
-            .frame(width: 78, height: 74)
-            .background(
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.white.opacity(isHovered ? 0.14 : 0.07))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .stroke(Color.white.opacity(isHovered ? 0.22 : 0.08), lineWidth: 0.8)
-                    )
-            )
-            .scaleEffect(isHovered ? 1.03 : 1.0)
-            .animation(LazyNotchMotion.interactiveSpring, value: isHovered)
-            // Drag-out support: drag this card straight out into Finder or any application!
-            .onDrag {
-                if let provider = NSItemProvider(contentsOf: item.url) {
-                    return provider
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("AirDrop")
+                        .font(.system(size: 11.5, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text(subtitle)
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.48))
+                        .lineLimit(1)
                 }
-                return NSItemProvider(object: item.url as NSURL)
             }
-            // Single click (or double click) opens the QuickLook preview
-            .onTapGesture {
+            .frame(width: 104, height: 74)
+            .background {
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .fill(Color.white.opacity(isHovered ? 0.11 : 0.07))
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .strokeBorder(
+                                isTargeted ? AnyShapeStyle(ShelfVisuals.glow) : AnyShapeStyle(Color.white.opacity(0.1)),
+                                lineWidth: isTargeted ? 1.5 : 0.8
+                            )
+                    }
+                    .shadow(color: isTargeted ? ShelfVisuals.blue.opacity(0.45) : .clear, radius: 10)
+            }
+            .scaleEffect(isTargeted ? 1.025 : 1)
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .onDrop(
+            of: [ShelfDrag.type.identifier, UTType.fileURL.identifier, UTType.item.identifier],
+            isTargeted: $isTargeted
+        ) { providers in
+            if providers.contains(where: { $0.hasItemConformingToTypeIdentifier(ShelfDrag.type.identifier) }) {
+                let handled = store.sendDraggedItemsViaAirDrop()
+                store.endDragging()
+                return handled
+            }
+
+            loadFileURLs(from: providers) { urls in
+                store.sendViaAirDrop(urls)
+            }
+            return true
+        }
+        .animation(LazyNotchMotion.interactiveSpring, value: isTargeted)
+        .animation(LazyNotchMotion.interactiveSpring, value: isHovered)
+        .help("Send all staged files with AirDrop, or drop files here")
+    }
+
+    @ViewBuilder
+    private var icon: some View {
+        ZStack {
+            Circle()
+                .fill(Color.white)
+                .frame(width: 34, height: 34)
+
+            switch store.airDropState {
+            case .idle:
+                Image(systemName: "dot.radiowaves.left.and.right")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(Color(nsColor: .systemBlue))
+            case .progress:
+                ProgressView()
+                    .controlSize(.small)
+                    .tint(Color(nsColor: .systemBlue))
+            case .success:
+                Image(systemName: "checkmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .systemBlue))
+            case .failure:
+                Image(systemName: "exclamationmark")
+                    .font(.system(size: 15, weight: .bold))
+                    .foregroundStyle(Color(nsColor: .systemOrange))
+            }
+        }
+        .contentTransition(.symbolEffect(.replace))
+    }
+
+    private var subtitle: String {
+        if isTargeted { return "Release to send" }
+        switch store.airDropState {
+        case .progress: return "Opening…"
+        case .success: return "Ready"
+        case .failure: return "Unavailable"
+        case .idle:
+            let count = store.selectedItemIDs.count
+            return count > 0 ? "\(count) selected" : "Send all"
+        }
+    }
+}
+
+private struct StagedItemCard: View {
+    let item: LazyShelfItem
+    @ObservedObject var store: LazyShelfStore
+    @State private var isHovered = false
+
+    private var isSelected: Bool { store.selectedItemIDs.contains(item.id) }
+    private var isFocused: Bool { store.focusedItemID == item.id }
+
+    var body: some View {
+        VStack(spacing: 4) {
+            ShelfThumbnail(item: item)
+
+            Text(item.name)
+                .font(.system(size: 10.5, weight: .medium))
+                .foregroundStyle(.white)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: 66)
+
+            Text(item.sizeString)
+                .font(.system(size: 9))
+                .foregroundStyle(.white.opacity(0.46))
+        }
+        .frame(width: 78, height: 74)
+        .background {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .fill(Color.white.opacity(isHovered ? 0.12 : 0.065))
+        }
+        .overlay {
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(
+                    isSelected ? Color(nsColor: .systemBlue).opacity(0.85) : Color.white.opacity(isHovered ? 0.18 : 0.08),
+                    lineWidth: isSelected ? 1.5 : 0.8
+                )
+        }
+        .overlay {
+            if isFocused && !isSelected {
+                RoundedRectangle(cornerRadius: 17, style: .continuous)
+                    .strokeBorder(Color.white.opacity(0.42), lineWidth: 1)
+                    .padding(-2)
+            }
+        }
+        .scaleEffect(isHovered ? 1.015 : 1)
+        .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .onTapGesture {
+            let modifiers = NSApp.currentEvent?.modifierFlags.intersection(.deviceIndependentFlagsMask) ?? []
+            if modifiers.contains(.command) {
+                store.toggleSelection(of: item, extendingRange: modifiers.contains(.shift))
+            } else {
+                store.focus(item)
                 store.showQuickLook(for: item)
             }
-            .contextMenu {
-                Button("Open") {
-                    NSWorkspace.shared.open(item.url)
-                }
-                Button("Reveal in Finder") {
-                    NSWorkspace.shared.activateFileViewerSelecting([item.url])
-                }
-                Button("AirDrop") {
-                    NSSharingService(named: .sendViaAirDrop)?.perform(withItems: [item.url])
-                }
-                Divider()
-                Button("Remove from Tray", role: .destructive) {
-                    withAnimation(LazyNotchMotion.interactiveSpring) {
-                        store.remove(item: item)
-                    }
+        }
+        .onDrag {
+            store.beginDragging(item)
+            return ShelfDrag.provider(for: item)
+        }
+        .onHover { isHovered = $0 }
+        .animation(LazyNotchMotion.interactiveSpring, value: isHovered)
+        .animation(LazyNotchMotion.interactiveSpring, value: isSelected)
+        .contextMenu {
+            Button("Quick Look") {
+                store.focus(item)
+                store.showQuickLook(for: item)
+            }
+            Button("Open") { NSWorkspace.shared.open(item.url) }
+            Button("Reveal in Finder") { NSWorkspace.shared.activateFileViewerSelecting([item.url]) }
+            Divider()
+            Button("Remove from Lazy Shelf", role: .destructive) {
+                withAnimation(LazyNotchMotion.interactiveSpring) {
+                    store.remove(item: item)
                 }
             }
+        }
+        .help(item.name)
+    }
+}
 
-            // Quick hover actions: Preview (eye), AirDrop, and Remove (x)
-            if isHovered {
-                HStack(spacing: 3) {
-                    Button {
-                        store.showQuickLook(for: item)
-                    } label: {
-                        Image(systemName: "eye.fill")
-                            .font(.system(size: 8.5))
-                            .foregroundStyle(.white)
-                            .frame(width: 16, height: 16)
-                            .background(Circle().fill(Color.black.opacity(0.75)))
-                    }
-                    .buttonStyle(.plain)
+private struct ShelfThumbnail: View {
+    let item: LazyShelfItem
+    @State private var thumbnail: NSImage?
 
-                    Button {
-                        NSSharingService(named: .sendViaAirDrop)?.perform(withItems: [item.url])
-                    } label: {
-                        Image(systemName: "airdrop")
-                            .font(.system(size: 8.5))
-                            .foregroundStyle(.white)
-                            .frame(width: 16, height: 16)
-                            .background(Circle().fill(Color.black.opacity(0.75)))
-                    }
-                    .buttonStyle(.plain)
+    var body: some View {
+        Image(nsImage: thumbnail ?? item.icon)
+            .resizable()
+            .aspectRatio(contentMode: .fit)
+            .frame(width: 38, height: 34)
+            .clipShape(RoundedRectangle(cornerRadius: 7, style: .continuous))
+            .task(id: item.url) {
+                let request = QLThumbnailGenerator.Request(
+                    fileAt: item.url,
+                    size: CGSize(width: 76, height: 68),
+                    scale: NSScreen.main?.backingScaleFactor ?? 2,
+                    representationTypes: .all
+                )
+                thumbnail = try? await QLThumbnailGenerator.shared.generateBestRepresentation(for: request).nsImage
+            }
+    }
+}
 
-                    Button {
-                        withAnimation(LazyNotchMotion.interactiveSpring) {
-                            store.remove(item: item)
-                        }
-                    } label: {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 8.5, weight: .bold))
-                            .foregroundStyle(.white)
-                            .frame(width: 16, height: 16)
-                            .background(Circle().fill(Color.black.opacity(0.75)))
+private struct ShelfReorderDropDelegate: DropDelegate {
+    let targetID: UUID?
+    let store: LazyShelfStore
+
+    func dropEntered(info: DropInfo) {
+        guard info.hasItemsConforming(to: [ShelfDrag.type]) else { return }
+        withAnimation(LazyNotchMotion.interactiveSpring) {
+            store.moveDraggedItems(before: targetID)
+        }
+    }
+
+    func dropUpdated(info: DropInfo) -> DropProposal? {
+        DropProposal(operation: .move)
+    }
+
+    func performDrop(info: DropInfo) -> Bool {
+        store.endDragging()
+        return true
+    }
+}
+
+private func loadFileURLs(from providers: [NSItemProvider], completion: @escaping ([URL]) -> Void) {
+    let group = DispatchGroup()
+    var urls: [URL] = []
+
+    for provider in providers {
+        group.enter()
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.fileURL.identifier) { data, _ in
+                DispatchQueue.main.async {
+                    if let data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                        urls.append(url)
                     }
-                    .buttonStyle(.plain)
+                    group.leave()
                 }
-                .padding(4)
-                .transition(.opacity)
+            }
+        } else {
+            _ = provider.loadObject(ofClass: URL.self) { url, _ in
+                DispatchQueue.main.async {
+                    if let url { urls.append(url) }
+                    group.leave()
+                }
             }
         }
-        .onHover { hovering in
-            isHovered = hovering
-        }
+    }
+
+    group.notify(queue: .main) {
+        completion(urls)
     }
 }

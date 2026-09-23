@@ -77,6 +77,57 @@ final class ShellViewModelTests: XCTestCase {
         )
     }
 
+    func testShelfQueueSelectionReorderingAndAirDropPayloads() throws {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: directory) }
+
+        let urls = ["one.txt", "two.txt", "three.txt"].map { directory.appendingPathComponent($0) }
+        for url in urls {
+            try Data(url.lastPathComponent.utf8).write(to: url)
+        }
+
+        let suiteName = "LazyShelfTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var sentURLs: [URL] = []
+        let store = LazyShelfStore(defaults: defaults) { urls in
+            sentURLs = urls
+            return true
+        }
+
+        store.add(urls: urls)
+        XCTAssertEqual(store.items.map(\.url), urls)
+
+        store.focus(store.items[0])
+        let focusedID = store.focusedItemID
+        store.toggleSelection(of: store.items[1], extendingRange: false)
+        XCTAssertEqual(store.focusedItemID, focusedID)
+        store.toggleSelection(of: store.items[2], extendingRange: true)
+        XCTAssertEqual(store.selectedItemIDs, Set(store.items[1...2].map(\.id)))
+
+        store.beginDragging(store.items[1])
+        XCTAssertTrue(store.sendDraggedItemsViaAirDrop())
+        XCTAssertEqual(sentURLs, Array(urls[1...2]))
+
+        store.moveDraggedItems(before: store.items[0].id)
+        XCTAssertEqual(store.items.map(\.url), [urls[1], urls[2], urls[0]])
+
+        store.moveDraggedItems(before: nil)
+        XCTAssertEqual(store.items.map(\.url), [urls[0], urls[1], urls[2]])
+
+        store.moveDraggedItems(before: store.items[0].id)
+        XCTAssertEqual(store.items.map(\.url), [urls[1], urls[2], urls[0]])
+
+        let restored = LazyShelfStore(defaults: defaults) { _ in true }
+        XCTAssertEqual(restored.items.map(\.url), [urls[1], urls[2], urls[0]])
+        XCTAssertTrue(restored.selectedItemIDs.isEmpty)
+
+        XCTAssertTrue(store.sendAllViaAirDrop())
+        XCTAssertEqual(sentURLs, [urls[1], urls[2], urls[0]])
+    }
+
     func testCodexUsageWindowClampsRemainingPercent() {
         let window = CodexUsageService.parseWindow([
             "usedPercent": 125,

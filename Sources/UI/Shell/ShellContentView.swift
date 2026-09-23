@@ -671,7 +671,7 @@ struct ExpandedNotchContent: View {
             .frame(maxHeight: .infinity)
             .padding(.horizontal, 36)
             .padding(.top, 4)
-            .padding(.bottom, selectedTab == .shelf ? 0 : 16)
+            .padding(.bottom, 16)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .transition(.opacity)

@@ -2,6 +2,10 @@ import AppKit
 import Combine
 import SwiftUI
 
+private final class LazyNotchPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+}
+
 /// Observable shell state shared between the AppKit controller and SwiftUI content.
 @MainActor
 final class ShellViewModel: ObservableObject {
@@ -226,7 +230,7 @@ final class LazyNotchWindowController {
     // MARK: - Panel setup
 
     private func makePanel() {
-        let panel = NSPanel(
+        let panel = LazyNotchPanel(
             contentRect: .zero,
             styleMask: [.borderless, .nonactivatingPanel],
             backing: .buffered,

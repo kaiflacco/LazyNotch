@@ -7,12 +7,43 @@ import QuickLookUI
 public final class LazyShelfStore: NSObject, ObservableObject {
     public static let shared = LazyShelfStore()
 
-    private let persistenceKey = "LazyShelfStagedPaths"
+    public enum AirDropState: Equatable {
+        case idle
+        case progress
+        case success
+        case failure
+    }
+
+    private let persistenceKey: String
+    private let defaults: UserDefaults
+    private let airDropHandler: @MainActor ([URL]) -> Bool
+    private var airDropGeneration = UUID()
 
     @Published public var items: [LazyShelfItem] = []
     @Published public var previewItemURL: URL?
+    @Published public private(set) var selectedItemIDs: Set<UUID> = []
+    @Published public private(set) var focusedItemID: UUID?
+    @Published public private(set) var draggedItemIDs: [UUID] = []
+    @Published public private(set) var airDropState: AirDropState = .idle
+
+    private var selectionAnchorID: UUID?
 
     public override init() {
+        self.persistenceKey = "LazyShelfStagedPaths"
+        self.defaults = .standard
+        self.airDropHandler = Self.performNativeAirDrop
+        super.init()
+        loadPersistedItems()
+    }
+
+    init(
+        defaults: UserDefaults,
+        persistenceKey: String = "LazyShelfStagedPaths",
+        airDropHandler: @escaping @MainActor ([URL]) -> Bool
+    ) {
+        self.persistenceKey = persistenceKey
+        self.defaults = defaults
+        self.airDropHandler = airDropHandler
         super.init()
         loadPersistedItems()
     }
@@ -23,7 +54,7 @@ public final class LazyShelfStore: NSObject, ObservableObject {
 
     public func add(urls: [URL]) {
         var updated = items
-        for url in urls {
+        for url in urls.reversed() {
             // Avoid immediate duplicate additions
             if !updated.contains(where: { $0.url.path == url.path }) {
                 updated.insert(LazyShelfItem(url: url), at: 0)
@@ -35,6 +66,14 @@ public final class LazyShelfStore: NSObject, ObservableObject {
 
     public func remove(item: LazyShelfItem) {
         items.removeAll { $0.id == item.id }
+        selectedItemIDs.remove(item.id)
+        draggedItemIDs.removeAll { $0 == item.id }
+        if focusedItemID == item.id {
+            focusedItemID = items.first?.id
+        }
+        if selectionAnchorID == item.id {
+            selectionAnchorID = nil
+        }
         persistItems()
         if previewItemURL == item.url {
             closeQuickLook()
@@ -43,23 +82,144 @@ public final class LazyShelfStore: NSObject, ObservableObject {
 
     public func clearAll() {
         items.removeAll()
+        clearSelection()
+        focusedItemID = nil
+        draggedItemIDs = []
         persistItems()
         closeQuickLook()
     }
 
+    public func focus(_ item: LazyShelfItem) {
+        focusedItemID = item.id
+    }
+
+    public func moveFocus(by offset: Int) {
+        guard !items.isEmpty else { return }
+        let current = focusedItemID.flatMap { id in items.firstIndex { $0.id == id } }
+        let index = min(max((current ?? (offset > 0 ? -1 : items.count)) + offset, 0), items.count - 1)
+        focusedItemID = items[index].id
+    }
+
+    public func toggleSelection(of item: LazyShelfItem, extendingRange: Bool) {
+        guard let itemIndex = items.firstIndex(where: { $0.id == item.id }) else { return }
+
+        if extendingRange,
+           let anchorID = selectionAnchorID,
+           let anchorIndex = items.firstIndex(where: { $0.id == anchorID }) {
+            let range = min(anchorIndex, itemIndex)...max(anchorIndex, itemIndex)
+            selectedItemIDs.formUnion(range.map { items[$0].id })
+        } else {
+            if selectedItemIDs.contains(item.id) {
+                selectedItemIDs.remove(item.id)
+            } else {
+                selectedItemIDs.insert(item.id)
+            }
+            selectionAnchorID = item.id
+        }
+    }
+
+    public func selectAll() {
+        selectedItemIDs = Set(items.map(\.id))
+        selectionAnchorID = focusedItemID ?? items.first?.id
+    }
+
+    public func clearSelection() {
+        selectedItemIDs.removeAll()
+        selectionAnchorID = nil
+    }
+
+    public func beginDragging(_ item: LazyShelfItem) {
+        if selectedItemIDs.contains(item.id) {
+            draggedItemIDs = items.map(\.id).filter(selectedItemIDs.contains)
+        } else {
+            draggedItemIDs = [item.id]
+        }
+    }
+
+    public func endDragging() {
+        draggedItemIDs = []
+    }
+
+    public func moveDraggedItems(before targetID: UUID?) {
+        let movingIDs = Set(draggedItemIDs)
+        guard !movingIDs.isEmpty else { return }
+        if let targetID, movingIDs.contains(targetID) { return }
+
+        let movingItems = items.filter { movingIDs.contains($0.id) }
+        var remaining = items.filter { !movingIDs.contains($0.id) }
+        let targetIndex: Int
+        if let targetID {
+            guard let index = remaining.firstIndex(where: { $0.id == targetID }) else { return }
+            targetIndex = index
+        } else {
+            targetIndex = remaining.endIndex
+        }
+        remaining.insert(contentsOf: movingItems, at: targetIndex)
+        guard remaining != items else { return }
+        items = remaining
+        persistItems()
+    }
+
+    @discardableResult
+    public func sendAllViaAirDrop() -> Bool {
+        sendViaAirDrop(items.map(\.url))
+    }
+
+    @discardableResult
+    public func sendDraggedItemsViaAirDrop() -> Bool {
+        let dragged = Set(draggedItemIDs)
+        return sendViaAirDrop(items.filter { dragged.contains($0.id) }.map(\.url))
+    }
+
+    @discardableResult
+    public func sendViaAirDrop(_ urls: [URL]) -> Bool {
+        guard !urls.isEmpty else { return false }
+        let generation = UUID()
+        airDropGeneration = generation
+        airDropState = .progress
+        let succeeded = airDropHandler(urls)
+
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard let self, self.airDropGeneration == generation else { return }
+            self.airDropState = succeeded ? .success : .failure
+            try? await Task.sleep(for: .seconds(1.2))
+            guard self.airDropGeneration == generation else { return }
+            self.airDropState = .idle
+        }
+        return succeeded
+    }
+
+    public func toggleQuickLookForFocusedItem() {
+        guard let focusedItemID,
+              let item = items.first(where: { $0.id == focusedItemID }) else { return }
+        if previewItemURL == item.url {
+            closeQuickLook()
+        } else {
+            showQuickLook(for: item)
+        }
+    }
+
     private func persistItems() {
         let paths = items.map { $0.url.path }
-        UserDefaults.standard.set(paths, forKey: persistenceKey)
+        defaults.set(paths, forKey: persistenceKey)
     }
 
     private func loadPersistedItems() {
-        guard let paths = UserDefaults.standard.stringArray(forKey: persistenceKey) else { return }
+        guard let paths = defaults.stringArray(forKey: persistenceKey) else { return }
         var loaded: [LazyShelfItem] = []
         for path in Self.validStoredPaths(paths) {
             let url = URL(fileURLWithPath: path)
             loaded.append(LazyShelfItem(url: url))
         }
         self.items = loaded
+    }
+
+    private static func performNativeAirDrop(_ urls: [URL]) -> Bool {
+        guard let service = NSSharingService(named: .sendViaAirDrop),
+              service.canPerform(withItems: urls) else { return false }
+        service.perform(withItems: urls)
+        return true
     }
 
     // MARK: - QuickLook Preview Integration
