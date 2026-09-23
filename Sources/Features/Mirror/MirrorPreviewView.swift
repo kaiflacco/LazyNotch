@@ -26,7 +26,10 @@ final class CameraPreviewNSView: NSView {
         self.isMirrored = isMirrored
         super.init(frame: .zero)
         wantsLayer = true
-        imageLayer.contentsGravity = .resizeAspectFill
+        // Keep the complete camera frame visible inside the teardrop. Aspect-fill
+        // crops the preview on common 16:9 camera feeds and makes the controls feel
+        // detached from the content.
+        imageLayer.contentsGravity = .resizeAspect
         layer?.addSublayer(imageLayer)
         applyMirroring()
     }

@@ -131,6 +131,7 @@ public final class CameraManager: ObservableObject {
 
     private let worker = CaptureSessionWorker()
     private var cancellables = Set<AnyCancellable>()
+    private var lifecycleGeneration: UInt64 = 0
 
     public init() {
         checkPermission()
@@ -187,6 +188,8 @@ public final class CameraManager: ObservableObject {
     }
 
     public func start() {
+        lifecycleGeneration &+= 1
+        let generation = lifecycleGeneration
         let status = AVCaptureDevice.authorizationStatus(for: .video)
         guard status == .authorized else {
             if status == .notDetermined {
@@ -202,7 +205,7 @@ public final class CameraManager: ObservableObject {
         }
 
         worker.configure { [weak self] success, error in
-            guard let self = self else { return }
+            guard let self, self.lifecycleGeneration == generation else { return }
             if !success {
                 self.errorMessage = error
                 return
@@ -213,17 +216,20 @@ public final class CameraManager: ObservableObject {
             }
 
             self.worker.start { [weak self] isRunning in
-                self?.isRunning = isRunning
+                guard let self, self.lifecycleGeneration == generation else { return }
+                self.isRunning = isRunning
             }
         }
     }
 
     public func stop() {
+        lifecycleGeneration &+= 1
+        let generation = lifecycleGeneration
+        worker.onFrame = nil
+        currentFrame = nil
         worker.stop { [weak self] isRunning in
-            guard let self = self else { return }
+            guard let self, self.lifecycleGeneration == generation else { return }
             self.isRunning = isRunning
-            self.worker.onFrame = nil
-            self.currentFrame = nil
         }
     }
 }

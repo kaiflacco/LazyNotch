@@ -1,8 +1,7 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var displayCoordinator: DisplayCoordinator!
-    private var windowController: LazyNotchWindowController!
+    private var runtime: LazyNotchRuntime!
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -11,14 +10,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         _ = CalendarService.shared
         _ = MediaService.shared
 
-        displayCoordinator = DisplayCoordinator()
-        windowController = LazyNotchWindowController(displayCoordinator: displayCoordinator)
-        windowController.show()
+        runtime = LazyNotchRuntime()
+        runtime.start()
 
         NSApp.activate(ignoringOtherApps: false)
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        runtime.stop()
     }
 }

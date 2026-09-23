@@ -16,6 +16,11 @@ let package = Package(
                     "-Xlinker", "Info.plist"
                 ])
             ]
+        ),
+        .testTarget(
+            name: "LazyNotchTests",
+            dependencies: ["LazyNotch"],
+            path: "Tests/LazyNotchTests"
         )
     ]
 )

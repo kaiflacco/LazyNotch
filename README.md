@@ -1,7 +1,5 @@
 <div align="center">
 
-<img src="docs/design/lazynotch-banner.png" alt="LazyNotch Banner" width="600"/>
-
 # LazyNotch
 
 **A premium macOS notch utility that transforms your MacBook's notch into an intelligent, always-available control center.**
@@ -27,29 +25,15 @@ The notch morphs between three states — **idle**, **compact live-activity pill
 
 | Feature | Description |
 |---|---|
-| **🎵 Live Media Control** | Album art, track info, and playback controls for Spotify & Apple Music — shown in the compact pill when music is playing |
+| **🎵 Live Media Control** | Album art, track info, and playback controls for Spotify, Apple Music, desktop players, and browser media such as YouTube Music — shown in the compact pill when media is playing |
 | **📅 Calendar Glance** | 7-day week strip with event indicators and a schedule glance card, powered by EventKit |
-| **🗂 Lazy Shelf** | A temporary file tray — drag files in, stage them, then drag out into any app; supports QuickLook preview & AirDrop |
+| **🗂 Lazy Shelf** | A temporary file tray — drop files into the open shelf, preview them, drag them to any app, or send them with AirDrop |
 | **📷 Hand Mirror** | Instant camera preview window — one click, no app switch |
-| **⚡ Global Drop Zone** | Drag any file from Finder directly onto the notch to route it to the Tray or AirDrop |
 | **🌊 Organic Spring Physics** | Custom NotchShape morphing + tuned spring constants that match NotchNook / Dynamic Island feel |
 | **🖥 Multi-display Aware** | Automatically anchors to the notch display; adapts instantly to resolution changes & display hotplug |
 | **🔒 Permission-Stable Code Identity** | Uses a stable bundle identifier for codesigning so TCC grants (Camera, Calendar, Apple Events) survive every rebuild |
 
 ---
-
-## 📸 Screenshots
-
-<table>
-  <tr>
-    <td><img src="docs/design/screenshot-expanded.png" alt="Expanded Island" width="350"/></td>
-    <td><img src="docs/design/screenshot-compact.png" alt="Compact Live Activity" width="350"/></td>
-  </tr>
-  <tr>
-    <td align="center"><b>Expanded island</b> with media, mirror, and calendar widgets</td>
-    <td align="center"><b>Compact live-activity pill</b> while music is playing</td>
-  </tr>
-</table>
 
 ---
 
@@ -59,15 +43,14 @@ The notch morphs between three states — **idle**, **compact live-activity pill
 Sources/
 ├── main.swift                         # App entry point
 ├── App/
-│   └── AppDelegate.swift              # Bootstraps DisplayCoordinator + WindowController
+│   ├── AppDelegate.swift              # Application lifecycle
+│   └── LazyNotchRuntime.swift         # App-scoped composition and lifecycle boundary
 ├── Core/
-│   ├── Display/DisplayCoordinator.swift   # Screen geometry, notch dimensions, display observer
-│   ├── Events/                            # (Input event infrastructure, future)
-│   └── Shell/ShellState.swift             # Shell open/closed state machine
+│   └── Display/DisplayCoordinator.swift   # Screen geometry, notch dimensions, display observer
 ├── Features/
 │   ├── Calendar/CalendarService.swift     # EventKit integration
 │   ├── LazyShelf/                         # File tray (model, store, view)
-│   ├── Media/                             # MediaTrack model + MediaService (Spotify & Music)
+│   ├── Media/                             # MediaTrack model + MediaService (native + browser media)
 │   ├── Mirror/                            # CameraManager, MirrorEffectEngine, preview views
 │   └── Settings/                          # Settings sheet + window controller
 └── UI/
@@ -111,7 +94,7 @@ cd LazyNotch
 4. Restart the app
 
 > **First run — permissions**
-> macOS will prompt for **Calendar**, **Camera**, and **Apple Events (Spotify/Music)** access.
+> macOS will prompt for **Calendar** and **Camera**. Media metadata comes from macOS's system now-playing session; Apple Events access may be used to read a browser tab URL for thumbnails and for optional app-specific controls. No browser JavaScript setting is required.
 > Grant them in **System Settings → Privacy & Security**.
 > Because the app uses a stable code identity, you only need to grant these once.
 
@@ -130,24 +113,17 @@ For a faster iteration cycle when working on UI only (no TCC-sensitive features)
 
 | Document | Purpose |
 |---|---|
-| [`docs/product/00-README.md`](docs/product/00-README.md) | Project overview & quick start |
-| [`docs/product/01-product-spec.md`](docs/product/01-product-spec.md) | Core requirements & target audience |
-| [`docs/product/02-feature-matrix.md`](docs/product/02-feature-matrix.md) | Feature breakdown & priorities |
-| [`docs/design/03-ui-spec.md`](docs/design/03-ui-spec.md) | UI/UX specifications & layout |
-| [`docs/design/05-design-tokens.md`](docs/design/05-design-tokens.md) | Design-system tokens |
-| [`docs/design/07-animation-spec.md`](docs/design/07-animation-spec.md) | Spring physics & animation spec |
-| [`docs/engineering/08-architecture.md`](docs/engineering/08-architecture.md) | Technical architecture |
-| [`docs/engineering/09-permissions-platform.md`](docs/engineering/09-permissions-platform.md) | macOS permissions guide |
-| [`docs/engineering/11-implementation-plan.md`](docs/engineering/11-implementation-plan.md) | Engineering execution plan |
+| [`CONTEXT.md`](CONTEXT.md) | Product and architecture vocabulary |
+| [`.scratch/lazynotch-restructure/spec.md`](.scratch/lazynotch-restructure/spec.md) | Current architecture, UX, testing, and implementation specification |
+| [`.scratch/lazynotch-restructure/map.md`](.scratch/lazynotch-restructure/map.md) | Resolved wayfinder decisions and migration order |
+| [`docs/agents/issue-tracker.md`](docs/agents/issue-tracker.md) | Local Markdown issue-tracker workflow |
+| [`docs/agents/domain.md`](docs/agents/domain.md) | Domain-context layout and ADR guidance |
 
 ---
 
-## 🛣 Roadmap
+## 🛣 Current scope
 
-- [ ] **v0.2** — Settings persistence with `UserDefaults` + iCloud sync
-- [ ] **v0.3** — Notification / Focus indicator in the compact pill
-- [ ] **v0.4** — Plugin API for third-party widgets
-- [ ] **v1.0** — App Store submission + notarization pipeline
+This effort preserves the existing local-first feature set, improves the in-process service boundaries, and corrects alignment, cropping, spacing, text fitting, hit regions, and transition defects. Remote sync, a plugin API, and unrelated visual redesigns are out of scope.
 
 ---
 

@@ -9,6 +9,7 @@ public struct SettingsSheet: View {
 
     @AppStorage("openOnHover") private var openOnHover: Bool = true
     @AppStorage("showLiveMediaActivity") private var showLiveMediaActivity: Bool = true
+    @AppStorage("showCodexUsage") private var showCodexUsage: Bool = true
     @AppStorage("hoverGraceDuration") private var hoverGraceDuration: Double = 0.15
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
     @State private var selectedTab: SettingsTab = .general
@@ -155,6 +156,7 @@ public struct SettingsSheet: View {
                     Text("Automatically launch LazyNotch when your Mac starts up.")
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .toggleStyle(SwitchToggleStyle(tint: .lnAccentBlue))
@@ -177,9 +179,10 @@ public struct SettingsSheet: View {
                     Text("Expand Notch on Mouse Hover")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
-                    Text("Move cursor towards the physical notch to peek or expand.")
+                    Text("Hover opens the idle notch; activity strips stay click-only.")
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .toggleStyle(SwitchToggleStyle(tint: .lnAccentBlue))
@@ -191,9 +194,25 @@ public struct SettingsSheet: View {
                     Text("Dynamic Island Live Media Pill")
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(.white)
-                    Text("Show compact album art and animated equalizer wings when music is playing.")
+                    Text("Show compact album art and animated equalizer wings for system media, including browser tabs, with no browser setup.")
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            .toggleStyle(SwitchToggleStyle(tint: .lnAccentBlue))
+
+            Divider().background(Color.white.opacity(0.06))
+
+            Toggle(isOn: $showCodexUsage) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Show Codex Usage Remaining")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.white)
+                    Text("Keep Codex usage available in the main widget; show it as the live pill while coding.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
             .toggleStyle(SwitchToggleStyle(tint: .lnAccentBlue))
@@ -232,6 +251,7 @@ public struct SettingsSheet: View {
                 Text("Allows LazyNotch to display upcoming events and schedule in the calendar widget.")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
                     if !calendarService.hasPermission {
@@ -300,6 +320,7 @@ public struct SettingsSheet: View {
                 Text("Allows LazyNotch to display the live Hand Mirror camera dropdown from the physical notch.")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.6))
+                    .fixedSize(horizontal: false, vertical: true)
 
                 HStack(spacing: 8) {
                     if !cameraManager.hasPermission {
@@ -351,6 +372,7 @@ public struct SettingsSheet: View {
                 Text("Adjust how quickly the notch reacts when the pointer leaves the hot zone.")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.55))
+                    .fixedSize(horizontal: false, vertical: true)
 
                 Slider(value: $hoverGraceDuration, in: 0.05...0.4, step: 0.05)
                     .tint(.lnAccentBlue)
@@ -366,6 +388,7 @@ public struct SettingsSheet: View {
                     Text("Fluid 22 pt Apple-style organic ear flare curve.")
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Text("22 pt")
@@ -388,6 +411,7 @@ public struct SettingsSheet: View {
                     Text("Remove all files currently held in LazyShelf.")
                         .font(.system(size: 11))
                         .foregroundStyle(.white.opacity(0.55))
+                        .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer()
                 Button("Clear Shelf") {
@@ -404,9 +428,10 @@ public struct SettingsSheet: View {
                 Image(systemName: "info.circle")
                     .font(.system(size: 16))
                     .foregroundStyle(Color.lnAccentBlue)
-                Text("LazyShelf allows you to drag files anywhere on screen, drop them into the notch tray, and drag them back into Slack, Mail, Xcode, or Finder.")
+                Text("LazyShelf lets you drop files into the open shelf, preview them, drag them to other apps, and send them with AirDrop.")
                     .font(.system(size: 11))
                     .foregroundStyle(.white.opacity(0.7))
+                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }

@@ -5,8 +5,6 @@ import SwiftUI
 /// Clicks outside the active notch boundary pass through cleanly to underlying windows.
 final class ShellHostingView: NSHostingView<ShellContentView> {
     weak var viewModel: ShellViewModel?
-    var shadowPaddingX: CGFloat = 75
-    var shadowPaddingBottom: CGFloat = 100
 
     required init(rootView: ShellContentView) {
         super.init(rootView: rootView)
@@ -15,69 +13,23 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
     }
 
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        guard let viewModel else { return [] }
-        if !viewModel.isExpanded {
-            withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
-                viewModel.isExpanded = true
-            }
-        }
-        updateDragZone(for: sender)
-        return .copy
+        canAcceptShelfDrop(sender) ? .copy : []
     }
 
     override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
-        guard let viewModel else { return .copy }
-        if !viewModel.isExpanded {
-            withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
-                viewModel.isExpanded = true
-            }
-        }
-        updateDragZone(for: sender)
-        
-        let point = convert(sender.draggingLocation, from: nil)
-        let hudWidth = LazyNotchWindowController.dropHUDWidth
-        let hudHeight = LazyNotchWindowController.dropHUDHeight
-        let islandY = isFlipped ? 0 : (bounds.height - hudHeight)
-        let islandRect = NSRect(
-            x: (bounds.width - hudWidth) / 2,
-            y: islandY,
-            width: hudWidth,
-            height: hudHeight
-        )
-        let hitRect = islandRect.insetBy(dx: -25, dy: -25)
-        return hitRect.contains(point) ? .copy : []
+        canAcceptShelfDrop(sender) ? .copy : []
     }
 
-    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
-        guard let viewModel else { return }
-        withAnimation(LazyNotchMotion.interactiveSpring) {
-            viewModel.globalDragZone = .none
-        }
-    }
-
-    private func updateDragZone(for sender: any NSDraggingInfo) {
-        guard let viewModel else { return }
+    private func canAcceptShelfDrop(_ sender: any NSDraggingInfo) -> Bool {
+        guard let viewModel, viewModel.isExpanded, viewModel.activeTab == .shelf else { return false }
         let point = convert(sender.draggingLocation, from: nil)
-        
-        let hudWidth = LazyNotchWindowController.dropHUDWidth
-        let hudHeight = LazyNotchWindowController.dropHUDHeight
-        let islandY = isFlipped ? 0 : (bounds.height - hudHeight)
-        let islandRect = NSRect(
-            x: (bounds.width - hudWidth) / 2,
-            y: islandY,
-            width: hudWidth,
-            height: hudHeight
+        let shelfRect = NSRect(
+            x: (bounds.width - LazyNotchWindowController.openWidth) / 2,
+            y: isFlipped ? 0 : (bounds.height - LazyNotchWindowController.openHeight),
+            width: LazyNotchWindowController.openWidth,
+            height: LazyNotchWindowController.openHeight
         )
-        
-        let hitRect = islandRect.insetBy(dx: -25, dy: -25)
-        if hitRect.contains(point) {
-            let targetZone: GlobalDragZone = point.x < islandRect.midX ? .tray : .airdrop
-            if viewModel.globalDragZone != targetZone {
-                withAnimation(LazyNotchMotion.interactiveSpring) {
-                    viewModel.globalDragZone = targetZone
-                }
-            }
-        }
+        return shelfRect.contains(point)
     }
 
     private func extractURLs(from pasteboard: NSPasteboard) -> [URL] {
@@ -102,47 +54,21 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
     }
 
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
-        guard let viewModel = viewModel else { return false }
+        guard let viewModel, canAcceptShelfDrop(sender) else { return false }
         let urls = extractURLs(from: sender.draggingPasteboard)
         guard !urls.isEmpty else { return false }
-        
-        let point = convert(sender.draggingLocation, from: nil)
-        let hudWidth = LazyNotchWindowController.dropHUDWidth
-        let hudHeight = LazyNotchWindowController.dropHUDHeight
-        let islandY = isFlipped ? 0 : (bounds.height - hudHeight)
-        let islandRect = NSRect(
-            x: (bounds.width - hudWidth) / 2,
-            y: islandY,
-            width: hudWidth,
-            height: hudHeight
-        )
-        let hitRect = islandRect.insetBy(dx: -30, dy: -30)
-        guard hitRect.contains(point) else { return false }
-        
-        let dropZone: GlobalDragZone = point.x < islandRect.midX ? .tray : .airdrop
-        
+
         NSHapticFeedbackManager.defaultPerformer.perform(.generic, performanceTime: .now)
-        
-        if dropZone == .airdrop {
-            withAnimation(LazyNotchMotion.interactiveSpring) {
-                viewModel.globalDragZone = .none
-                viewModel.isExpanded = false
-            }
-            DispatchQueue.main.async {
-                NSSharingService(named: .sendViaAirDrop)?.perform(withItems: urls)
-            }
-        } else {
+
+        withAnimation(LazyNotchMotion.interactiveSpring) {
             LazyShelfStore.shared.add(urls: urls)
-            withAnimation(LazyNotchMotion.interactiveSpring) {
-                viewModel.globalDragZone = .none
-                viewModel.activeTab = .shelf
-            }
-            NotificationCenter.default.post(
-                name: NSNotification.Name("LazyNotchHoldOpenTrayRequest"),
-                object: nil,
-                userInfo: ["seconds": 5.0]
-            )
         }
+        viewModel.openShelf()
+        NotificationCenter.default.post(
+            name: NSNotification.Name("LazyNotchHoldOpenTrayRequest"),
+            object: nil,
+            userInfo: ["seconds": 5.0]
+        )
         return true
     }
 
@@ -157,20 +83,11 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let viewModel else { return nil }
 
-        let localPoint = convert(point, from: superview)
+        // AppKit supplies `point` in this view's local coordinate space. Converting it
+        // from the superview shifts the hit region and makes the shell feel misaligned.
+        let localPoint = point
 
-        if viewModel.globalDragZone != .none {
-            let activeWidth = LazyNotchWindowController.dropHUDWidth
-            let activeHeight = LazyNotchWindowController.dropHUDHeight
-            let notchBounds = NSRect(
-                x: (bounds.width - activeWidth) / 2,
-                y: 0,
-                width: activeWidth,
-                height: activeHeight
-            )
-            guard notchBounds.contains(localPoint) else { return nil }
-            return super.hitTest(point) ?? self
-        } else if viewModel.isExpanded {
+        if viewModel.isExpanded {
             let activeWidth = LazyNotchWindowController.openWidth
             let activeHeight = LazyNotchWindowController.openHeight
             let notchBounds = NSRect(
@@ -185,8 +102,8 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
             return super.hitTest(point) ?? self
         } else {
             // When notch is collapsed: allow clicking the notch or live activity in navbar to open the Nook.
-            let activeWidth = viewModel.hasActiveLiveActivity ? (viewModel.compactSize.width + 104) : (viewModel.compactSize.width + 24)
-            let activeHeight = viewModel.hasActiveLiveActivity ? (viewModel.compactSize.height + 16) : (viewModel.compactSize.height + 8)
+            let activeWidth = viewModel.isActivityContentVisible ? (viewModel.compactSize.width + 104) : (viewModel.compactSize.width + 24)
+            let activeHeight = viewModel.isActivityContentVisible ? (viewModel.compactSize.height + 16) : (viewModel.compactSize.height + 8)
             let notchBounds = NSRect(
                 x: (bounds.width - activeWidth) / 2,
                 y: 0,

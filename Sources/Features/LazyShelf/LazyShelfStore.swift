@@ -17,6 +17,10 @@ public final class LazyShelfStore: NSObject, ObservableObject {
         loadPersistedItems()
     }
 
+    public static func validStoredPaths(_ paths: [String], fileManager: FileManager = .default) -> [String] {
+        paths.filter { fileManager.fileExists(atPath: $0) }
+    }
+
     public func add(urls: [URL]) {
         var updated = items
         for url in urls {
@@ -51,11 +55,9 @@ public final class LazyShelfStore: NSObject, ObservableObject {
     private func loadPersistedItems() {
         guard let paths = UserDefaults.standard.stringArray(forKey: persistenceKey) else { return }
         var loaded: [LazyShelfItem] = []
-        for path in paths {
+        for path in Self.validStoredPaths(paths) {
             let url = URL(fileURLWithPath: path)
-            if FileManager.default.fileExists(atPath: path) {
-                loaded.append(LazyShelfItem(url: url))
-            }
+            loaded.append(LazyShelfItem(url: url))
         }
         self.items = loaded
     }

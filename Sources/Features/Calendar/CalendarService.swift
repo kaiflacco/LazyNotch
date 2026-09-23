@@ -14,6 +14,14 @@ public struct UpcomingCalendarEvent: Sendable, Equatable {
     }
 }
 
+private final class EventStoreBox: @unchecked Sendable {
+    let value: EKEventStore
+
+    init(_ value: EKEventStore) {
+        self.value = value
+    }
+}
+
 @MainActor
 public final class CalendarService: ObservableObject {
     public static let shared = CalendarService()
@@ -35,6 +43,11 @@ public final class CalendarService: ObservableObject {
 
     nonisolated public static func dayKey(for date: Date) -> String {
         dayKeyFormatter.string(from: date)
+    }
+
+    nonisolated public static func groupedEvents(_ events: [UpcomingCalendarEvent]) -> [String: [UpcomingCalendarEvent]] {
+        Dictionary(grouping: events, by: { dayKey(for: $0.startDate) })
+            .mapValues { $0.sorted { $0.startDate < $1.startDate } }
     }
     
     private init() {
@@ -68,11 +81,11 @@ public final class CalendarService: ObservableObject {
     }
 
     public func events(for date: Date) -> [UpcomingCalendarEvent] {
+        guard hasPermission else { return [] }
         let key = Self.dayKey(for: date)
         if let cached = weekEvents[key] {
             return cached
         }
-        guard hasPermission else { return [] }
         let cal = Calendar.current
         let start = cal.startOfDay(for: date)
         guard let end = cal.date(bySettingHour: 23, minute: 59, second: 59, of: date) else { return [] }
@@ -138,6 +151,9 @@ public final class CalendarService: ObservableObject {
                 // System Settings so they can flip the switch manually.
                 NSLog("[LazyNotch Calendar] request denied instantly (no prompt shown); opening Calendar settings")
                 self.openCalendarSettings()
+                self.clearUnavailableState()
+            } else {
+                self.clearUnavailableState()
             }
             // If a prompt WAS shown and the user declined, do nothing — the
             // widget keeps its "Connect Calendar Access" button.
@@ -178,7 +194,7 @@ public final class CalendarService: ObservableObject {
             // "Connect Calendar Access" button in the calendar widget. Auto-prompting
             // here made the system permission dialog (and System Settings) pop open
             // whenever the app merely became active.
-            hasPermission = false
+            clearUnavailableState()
         } else {
             // Test if events can actually be fetched (in case TCC granted without updating status cache)
             let cal = Calendar.current
@@ -189,13 +205,16 @@ public final class CalendarService: ObservableObject {
                 hasPermission = true
                 fetchUpcomingEvents()
             } else {
-                hasPermission = false
+                clearUnavailableState()
             }
         }
     }
     
     public func fetchUpcomingEvents() {
-        guard hasPermission else { return }
+        guard hasPermission else {
+            clearUnavailableState()
+            return
+        }
         
         let cal = Calendar.current
         let today = Date()
@@ -204,22 +223,21 @@ public final class CalendarService: ObservableObject {
             return
         }
         
-        let store = self.eventStore
+        let store = EventStoreBox(self.eventStore)
         DispatchQueue.global(qos: .userInitiated).async {
-            let predicate = store.predicateForEvents(withStart: startDate, end: endDate, calendars: nil)
-            let ekEvents = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
+            let predicate = store.value.predicateForEvents(withStart: startDate, end: endDate, calendars: nil)
+            let ekEvents = store.value.events(matching: predicate).sorted { $0.startDate < $1.startDate }
 
-            var grouped: [String: [UpcomingCalendarEvent]] = [:]
-            for event in ekEvents {
-                let key = CalendarService.dayKey(for: event.startDate)
-                let item = UpcomingCalendarEvent(
-                    title: event.title ?? "Event",
-                    startDate: event.startDate,
-                    endDate: event.endDate,
-                    isAllDay: event.isAllDay
-                )
-                grouped[key, default: []].append(item)
-            }
+            let grouped = CalendarService.groupedEvents(
+                ekEvents.map {
+                    UpcomingCalendarEvent(
+                        title: $0.title ?? "Event",
+                        startDate: $0.startDate,
+                        endDate: $0.endDate,
+                        isAllDay: $0.isAllDay
+                    )
+                }
+            )
 
             let todayKey = CalendarService.dayKey(for: today)
             let todayEvents = grouped[todayKey] ?? []
@@ -234,5 +252,11 @@ public final class CalendarService: ObservableObject {
                 self.nextEvent = next
             }
         }
+    }
+
+    private func clearUnavailableState() {
+        hasPermission = false
+        nextEvent = nil
+        weekEvents.removeAll()
     }
 }

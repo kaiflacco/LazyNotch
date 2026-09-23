@@ -1,54 +1,5 @@
 import SwiftUI
 
-// MARK: - Siri / Apple Intelligence Chromatic Palette
-
-public struct SiriColors {
-    public static let cyan = Color(red: 0.00, green: 0.88, blue: 0.96)
-    public static let azure = Color(red: 0.10, green: 0.52, blue: 1.00)
-    public static let purple = Color(red: 0.62, green: 0.26, blue: 0.98)
-    public static let magenta = Color(red: 1.00, green: 0.18, blue: 0.68)
-    public static let coral = Color(red: 1.00, green: 0.46, blue: 0.28)
-
-    public static var fullGradient: LinearGradient {
-        LinearGradient(
-            colors: [cyan, azure, purple, magenta, coral],
-            startPoint: .topLeading,
-            endPoint: .bottomTrailing
-        )
-    }
-
-    public static var horizontalGradient: LinearGradient {
-        LinearGradient(
-            colors: [cyan, azure, purple, magenta, coral],
-            startPoint: .leading,
-            endPoint: .trailing
-        )
-    }
-
-}
-
-struct BlurModifier: ViewModifier, Animatable {
-    nonisolated var radius: CGFloat
-    
-    nonisolated var animatableData: CGFloat {
-        get { radius }
-        set { radius = newValue }
-    }
-    
-    func body(content: Content) -> some View {
-        content.blur(radius: radius)
-    }
-}
-
-extension AnyTransition {
-    static func blur(radius: CGFloat) -> AnyTransition {
-        .modifier(
-            active: BlurModifier(radius: radius),
-            identity: BlurModifier(radius: 0)
-        )
-    }
-}
-
 /// The LazyNotch silhouette: concave top "ears" that tuck against the physical
 /// notch's rounded lower corners, so the panel reads as one continuous cutout.
 struct NotchShape: Shape {
@@ -169,6 +120,7 @@ struct ShellContentView: View {
 /// Text and controls sharpen in place while the album cover follows its own hero path.
 struct MorphRevealModifier: ViewModifier, Animatable {
     nonisolated var progress: CGFloat // 0.0 = hidden/blurred, 1.0 = revealed/sharp
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     nonisolated var animatableData: CGFloat {
         get { progress }
@@ -178,7 +130,7 @@ struct MorphRevealModifier: ViewModifier, Animatable {
     func body(content: Content) -> some View {
         content
             .opacity(Double(progress))
-            .blur(radius: (1.0 - progress) * 12)
+            .blur(radius: reduceMotion ? 0 : (1.0 - progress) * LazyNotchMotion.contentBlurRadius)
     }
 }
 
@@ -194,6 +146,7 @@ extension View {
 struct MorphingNotchIsland: View {
     @ObservedObject var viewModel: ShellViewModel
     @Namespace private var heroNamespace
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     /// Drives the NotchNook-style content morph explicitly (blur → sharp) so the effect
     /// runs even when SwiftUI skips insertion transitions (e.g. inside matched geometry).
     @State private var contentProgress: CGFloat = 0.0
@@ -214,16 +167,10 @@ struct MorphingNotchIsland: View {
         liveActivityVisibleWingWidth + liveActivityTopRadius + liveActivityBorderMargin // 42.0pt
     }
 
-    private var isDropHUDActive: Bool {
-        shellExpanded && viewModel.globalDragZone != .none
-    }
-
     private var targetWidth: CGFloat {
-        if isDropHUDActive {
-            return LazyNotchWindowController.dropHUDWidth
-        } else if shellExpanded {
+        if shellExpanded {
             return LazyNotchWindowController.openWidth
-        } else if viewModel.hasActiveLiveActivity {
+        } else if viewModel.isActivityContentVisible {
             // NotchNook hover look: island droops slightly wider, anchored at the notch
             return viewModel.compactSize.width + Self.liveActivityWingExtension * 2 + (viewModel.isHovered ? 8 : 0)
         } else {
@@ -232,11 +179,9 @@ struct MorphingNotchIsland: View {
     }
 
     private var targetHeight: CGFloat {
-        if isDropHUDActive {
-            return LazyNotchWindowController.dropHUDHeight
-        } else if shellExpanded {
+        if shellExpanded {
             return LazyNotchWindowController.openHeight
-        } else if viewModel.hasActiveLiveActivity {
+        } else if viewModel.isActivityContentVisible {
             // Subtle, sleek hover droop without excessive empty space at bottom
             return viewModel.compactSize.height + (viewModel.isHovered ? 5 : 0)
         } else {
@@ -245,11 +190,9 @@ struct MorphingNotchIsland: View {
     }
 
     private var targetTopRadius: CGFloat {
-        if isDropHUDActive {
-            return 16.0
-        } else if shellExpanded {
+        if shellExpanded {
             return 26.0
-        } else if viewModel.hasActiveLiveActivity {
+        } else if viewModel.isActivityContentVisible {
             return Self.liveActivityTopRadius
         } else {
             return 0.0
@@ -257,28 +200,27 @@ struct MorphingNotchIsland: View {
     }
 
     private var targetBottomRadius: CGFloat {
-        if isDropHUDActive {
-            return 28.0
-        } else if shellExpanded {
+        if shellExpanded {
             return 42.0
-        } else if viewModel.hasActiveLiveActivity {
+        } else if viewModel.isActivityContentVisible {
             return Self.liveActivityBottomRadius + (viewModel.isHovered ? 1.5 : 0)
         } else {
             return 10.0
         }
     }
 
-    /// The shell only renders when there's something to show (live activity, expanded
-    /// panel, drop HUD). In the idle state it draws NOTHING — the physical notch shows
+    /// The shell only renders when there's something to show (live activity or expanded
+    /// panel). In the idle state it draws NOTHING — the physical notch shows
     /// through untouched, instead of a black "copy" silhouette sitting on top of it.
     private var shouldShowShell: Bool {
-        viewModel.hasActiveLiveActivity || shellExpanded
+        viewModel.isActivityContentVisible || shellExpanded
     }
 
     /// Actual render visibility. Shown instantly when the shell grows out of the physical
     /// notch; hidden only AFTER the collapse spring has fully shrunk it back, so the idle
     /// silhouette never lingers on screen as a duplicate of the physical notch.
     @State private var shellVisible = false
+    @State private var transitionGeneration = 0
 
     var body: some View {
         ZStack(alignment: .top) {
@@ -288,28 +230,13 @@ struct MorphingNotchIsland: View {
                 bottomCornerRadius: targetBottomRadius
             )
             .fill(Color.black)
-            .overlay(
-                // Siri iridescent perimeter rim when in drop mode
-                NotchShape(
-                    topCornerRadius: targetTopRadius,
-                    bottomCornerRadius: targetBottomRadius
-                )
-                .stroke(
-                    isDropHUDActive
-                        ? AnyShapeStyle(SiriColors.horizontalGradient.opacity(0.65))
-                        : AnyShapeStyle(Color.clear),
-                    lineWidth: 1.2
-                )
-            )
             .shadow(
-                color: isDropHUDActive
-                    ? SiriColors.purple.opacity(0.38)
-                    : Color.black.opacity(
-                        shellExpanded ? 0.38 : (viewModel.hasActiveLiveActivity ? (viewModel.isHovered ? 0.45 : 0.22) : (viewModel.isHovered ? 0.25 : 0.0))
-                    ),
-                radius: isDropHUDActive ? 22 : (shellExpanded ? 20 : (viewModel.hasActiveLiveActivity && viewModel.isHovered ? 18 : 8)),
+                color: Color.black.opacity(
+                    shellExpanded ? 0.38 : (viewModel.isActivityContentVisible ? (viewModel.isHovered ? 0.45 : 0.22) : (viewModel.isHovered ? 0.25 : 0.0))
+                ),
+                radius: shellExpanded ? 20 : (viewModel.isActivityContentVisible && viewModel.isHovered ? 18 : 8),
                 x: 0,
-                y: isDropHUDActive ? 6 : (shellExpanded ? 10 : (viewModel.hasActiveLiveActivity && viewModel.isHovered ? 5 : 3))
+                y: shellExpanded ? 10 : (viewModel.isActivityContentVisible && viewModel.isHovered ? 5 : 3)
             )
             .shadow(
                 color: Color.black.opacity(shellExpanded ? 0.25 : 0.0),
@@ -323,7 +250,7 @@ struct MorphingNotchIsland: View {
                 // Keep the live-activity endpoint mounted in both directions. During
                 // opening it is hidden under blur while the main cover grows from it;
                 // during closing it becomes the destination as the cover returns.
-                if viewModel.hasActiveLiveActivity && (!viewModel.isExpanded || expandedContentMounted) {
+                if viewModel.isActivityContentVisible && (!viewModel.isExpanded || expandedContentMounted) {
                     CompactNotchContent(viewModel: viewModel, namespace: heroNamespace)
                         .frame(
                             width: viewModel.compactSize.width + Self.liveActivityWingExtension * 2,
@@ -331,7 +258,7 @@ struct MorphingNotchIsland: View {
                             alignment: .top
                         )
                         .opacity(Double(compactRevealProgress))
-                        .modifier(BlurModifier(radius: (1.0 - compactRevealProgress) * 8))
+                        .blur(radius: reduceMotion ? 0 : (1.0 - compactRevealProgress) * LazyNotchMotion.compactBlurRadius)
                         .allowsHitTesting(!viewModel.isExpanded)
                         .transition(.identity)
                 }
@@ -373,12 +300,18 @@ struct MorphingNotchIsland: View {
             )
         )
         .onTapGesture {
-            if !viewModel.isExpanded && !viewModel.hasActiveLiveActivity {
-                withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
-                    viewModel.isExpanded = true
+            if !viewModel.isExpanded && !viewModel.isActivityContentVisible {
+                withAnimation(
+                    reduceMotion
+                        ? .easeOut(duration: 0.16)
+                        : LazyNotchMotion.shellSpring(isExpanded: true)
+                ) {
+                    viewModel.openHome()
                 }
             }
         }
+        .accessibilityHint(viewModel.isActivityContentVisible ? "Click the activity strip to open LazyNotch" : "Click the notch to open the main widget")
+        .help(viewModel.isActivityContentVisible ? "Click the activity strip to open LazyNotch" : "Click the notch to open the main widget")
         .opacity(shellVisible ? 1.0 : 0.0)
         .onAppear {
             shellExpanded = viewModel.isExpanded
@@ -388,6 +321,8 @@ struct MorphingNotchIsland: View {
             shellVisible = shouldShowShell
         }
         .onChange(of: shouldShowShell) { _, show in
+            transitionGeneration += 1
+            let generation = transitionGeneration
             if show {
                 // Appear instantly — the shell grows out of the physical notch, which is
                 // already black, so no fade is needed and nothing pops.
@@ -397,20 +332,26 @@ struct MorphingNotchIsland: View {
                 // first, then hide the idle silhouette with a quick fade so it never
                 // reads as a copy of the notch.
                 DispatchQueue.main.asyncAfter(deadline: .now() + LazyNotchMotion.collapseSettleDuration) {
-                    guard !shouldShowShell else { return }
-                    withAnimation(.easeOut(duration: 0.15)) {
+                    guard generation == transitionGeneration, !shouldShowShell else { return }
+                    withAnimation(.easeOut(duration: reduceMotion ? 0.08 : 0.15)) {
                         shellVisible = false
                     }
                 }
             }
         }
         .onChange(of: viewModel.isExpanded) { _, expanded in
+            transitionGeneration += 1
+            let generation = transitionGeneration
             if expanded {
                 shellExpanded = true
                 expandedContentMounted = true
                 compactRevealProgress = 0
                 contentProgress = 0.0
-                withAnimation(.easeInOut(duration: LazyNotchMotion.contentRevealDuration).delay(LazyNotchMotion.contentRevealDelay)) {
+                withAnimation(
+                    reduceMotion
+                        ? .easeOut(duration: 0.12)
+                        : .easeInOut(duration: LazyNotchMotion.contentRevealDuration).delay(LazyNotchMotion.contentRevealDelay)
+                ) {
                     contentProgress = 1.0
                 }
             } else {
@@ -421,29 +362,46 @@ struct MorphingNotchIsland: View {
                 withTransaction(transaction) {
                     compactRevealProgress = 0
                 }
-                withAnimation(.easeInOut(duration: LazyNotchMotion.closeResponse)) {
+                withAnimation(
+                    reduceMotion
+                        ? .easeOut(duration: 0.10)
+                        : .easeInOut(duration: LazyNotchMotion.closeResponse)
+                ) {
                     compactRevealProgress = 1.0
                 }
-                withAnimation(.easeIn(duration: LazyNotchMotion.contentExitDuration)) {
+                withAnimation(
+                    reduceMotion
+                        ? .easeOut(duration: 0.08)
+                        : .easeIn(duration: LazyNotchMotion.contentExitDuration)
+                ) {
                     contentProgress = 0.0
                 }
                 DispatchQueue.main.asyncAfter(deadline: .now() + LazyNotchMotion.collapseDelay) {
-                    guard !viewModel.isExpanded else { return }
-                    withAnimation(LazyNotchMotion.shellSpring(isExpanded: false)) {
+                    guard generation == transitionGeneration, !viewModel.isExpanded else { return }
+                    withAnimation(
+                        reduceMotion
+                            ? .easeOut(duration: 0.16)
+                            : LazyNotchMotion.shellSpring(isExpanded: false)
+                    ) {
                         shellExpanded = false
                     }
                 }
                 // End the matched-geometry handoff when the cover return finishes;
                 // leaving the expanded endpoint alive beyond that creates a last-frame snap.
                 DispatchQueue.main.asyncAfter(deadline: .now() + LazyNotchMotion.collapseDelay + LazyNotchMotion.closeResponse) {
-                    guard !viewModel.isExpanded else { return }
+                    guard generation == transitionGeneration, !viewModel.isExpanded else { return }
                     expandedContentMounted = false
                 }
             }
         }
         // Geometry follows the visual phase, including the delayed collapse.
-        .animation(LazyNotchMotion.shellSpring(isExpanded: shellExpanded), value: shellExpanded)
-        .animation(LazyNotchMotion.pillMorphSpring, value: viewModel.hasActiveLiveActivity)
+        .animation(
+            reduceMotion
+                ? .easeOut(duration: 0.16)
+                : LazyNotchMotion.shellSpring(isExpanded: shellExpanded),
+            value: shellExpanded
+        )
+        .animation(LazyNotchMotion.pillMorphSpring, value: viewModel.isActivityContentVisible)
         .animation(LazyNotchMotion.interactiveSpring, value: viewModel.isHovered)
     }
 }
@@ -453,11 +411,16 @@ struct MorphingNotchIsland: View {
 /// "you clicked it" feel — while the shell itself never shrinks. Release springs
 /// back into the expansion morph.
 struct NotchStripPressStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .scaleEffect(x: configuration.isPressed ? 0.98 : 1.0, y: configuration.isPressed ? 0.88 : 1.0)
-            .opacity(configuration.isPressed ? 0.85 : 1.0)
-            .animation(.spring(response: 0.15, dampingFraction: 0.65), value: configuration.isPressed)
+            .scaleEffect(x: configuration.isPressed ? 0.985 : 1.0, y: configuration.isPressed ? 0.96 : 1.0)
+            .opacity(configuration.isPressed ? 0.92 : 1.0)
+            .animation(
+                reduceMotion ? .easeOut(duration: 0.08) : LazyNotchMotion.pressSpring,
+                value: configuration.isPressed
+            )
     }
 }
 
@@ -476,7 +439,9 @@ struct CompactNotchContent: View {
     }
 
     var body: some View {
-        if viewModel.hasActiveLiveActivity {
+        if viewModel.showsCodexLiveActivity, let usage = viewModel.codexUsage {
+            CodexUsageCompactContent(usage: usage, viewModel: viewModel)
+        } else if viewModel.isActivityContentVisible {
             let topRadius = MorphingNotchIsland.liveActivityTopRadius
             let borderMargin = MorphingNotchIsland.liveActivityBorderMargin
             let wingWidth = MorphingNotchIsland.liveActivityVisibleWingWidth
@@ -485,7 +450,7 @@ struct CompactNotchContent: View {
 
             Button {
                 withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
-                    viewModel.isExpanded = true
+                    viewModel.openHome()
                 }
             } label: {
             HStack(spacing: 0) {
@@ -495,23 +460,45 @@ struct CompactNotchContent: View {
 
                 // 2. Visible Left Wing Section (strictly centered in the visible black body!)
                 ZStack(alignment: .center) {
-                    if let image = mediaService.cachedArtwork {
-                        Image(nsImage: image)
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 5, style: .continuous)
-                                    .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
-                            )
-                    } else {
-                        fallbackAppIcon
+                    ZStack(alignment: .center) {
+                        if let image = mediaService.cachedArtwork {
+                            Image(nsImage: image)
+                                .resizable()
+                                .aspectRatio(1, contentMode: .fill)
+                                .clipped()
+                                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                        .stroke(Color.white.opacity(0.2), lineWidth: 0.5)
+                                )
+                        } else if let icon = MediaSourceIconResolver.icon(for: mediaService.currentTrack) {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 18, height: 18)
+                                .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                                .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
+                        } else {
+                            fallbackAppIcon
+                        }
+
+                        if mediaService.cachedArtwork != nil,
+                           let icon = MediaSourceIconResolver.icon(for: mediaService.currentTrack) {
+                            Image(nsImage: icon)
+                                .resizable()
+                                .aspectRatio(contentMode: .fit)
+                                .frame(width: 11, height: 11)
+                                .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+                                .shadow(color: .black.opacity(0.7), radius: 2, y: 1)
+                                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                                .offset(x: 1, y: 1)
+                        }
                     }
                 }
                 .matchedGeometryEffect(id: "albumArt", in: namespace, isSource: !viewModel.isExpanded)
                 .frame(width: 20, height: 20)
                 .frame(width: wingWidth, height: contentHeight, alignment: .center)
-                .scaleEffect(viewModel.isHovered ? 1.15 : 1.0)
+                .scaleEffect(viewModel.isHovered ? 1.08 : 1.0)
                 .offset(y: viewModel.isHovered ? 1.0 : 0)
 
                 // 3. Hardware Notch Cutout Gap
@@ -524,19 +511,19 @@ struct CompactNotchContent: View {
                 }
                 .frame(width: wingWidth, height: contentHeight, alignment: .center)
                 .offset(x: -2, y: viewModel.isHovered ? 1.0 : 0)
-                .scaleEffect(viewModel.isHovered ? 1.15 : 1.0)
+                .scaleEffect(viewModel.isHovered ? 1.08 : 1.0)
                 .opacity(waveformAppeared ? 1.0 : 0.0)
-                .blur(radius: waveformAppeared ? 0 : 4)
+                .blur(radius: waveformAppeared ? 0 : LazyNotchMotion.compactBlurRadius * 0.5)
                 .onAppear {
                     waveformAppeared = false
-                    withAnimation(.easeOut(duration: 0.38).delay(0.04)) {
+                    withAnimation(.easeOut(duration: LazyNotchMotion.contentRevealDuration).delay(0.03)) {
                         waveformAppeared = true
                     }
                 }
                 .onChange(of: viewModel.isExpanded) { _, expanded in
                     if !expanded {
                         waveformAppeared = false
-                        withAnimation(.easeOut(duration: 0.38).delay(0.04)) {
+                        withAnimation(.easeOut(duration: LazyNotchMotion.contentRevealDuration).delay(0.03)) {
                             waveformAppeared = true
                         }
                     }
@@ -557,6 +544,7 @@ struct CompactNotchContent: View {
             .contentShape(Rectangle())
             .opacity(viewModel.isHovered ? 1.0 : 0.94)
             .animation(LazyNotchMotion.interactiveSpring, value: viewModel.isHovered)
+            .help("Click to open LazyNotch and view live activity")
         }
     }
 
@@ -569,6 +557,74 @@ struct CompactNotchContent: View {
                     .font(.system(size: 5.5, weight: .bold))
                     .foregroundStyle(.white)
             )
+    }
+}
+
+private struct CodexUsageCompactContent: View {
+    let usage: CodexUsage
+    @ObservedObject var viewModel: ShellViewModel
+
+    var body: some View {
+        let topRadius = MorphingNotchIsland.liveActivityTopRadius
+        let borderMargin = MorphingNotchIsland.liveActivityBorderMargin
+        let wingWidth = MorphingNotchIsland.liveActivityVisibleWingWidth
+        let contentHeight = viewModel.compactSize.height
+        let totalWidth = viewModel.compactSize.width + (topRadius + borderMargin + wingWidth) * 2
+
+        Button {
+            withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
+                viewModel.openHome()
+            }
+        } label: {
+            HStack(spacing: 0) {
+                Spacer()
+                    .frame(width: topRadius + borderMargin, height: contentHeight)
+
+                ZStack {
+                    if let icon = viewModel.codexIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+                            .frame(width: 20, height: 20)
+                    } else {
+                        Circle()
+                            .fill(accentColor.opacity(0.18))
+                            .frame(width: 20, height: 20)
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 9, weight: .bold))
+                            .foregroundStyle(accentColor)
+                    }
+                }
+                .frame(width: wingWidth, height: contentHeight)
+
+                Spacer()
+                    .frame(width: viewModel.compactSize.width, height: contentHeight)
+
+                Text("\(usage.primary.remainingPercent)%")
+                    .font(.system(size: 8.5, weight: .bold, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(accentColor)
+                    .frame(width: wingWidth, height: contentHeight)
+
+                Spacer()
+                    .frame(width: topRadius + borderMargin, height: contentHeight)
+            }
+            .frame(width: totalWidth, height: contentHeight)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(NotchStripPressStyle())
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .contentShape(Rectangle())
+        .opacity(viewModel.isHovered ? 1.0 : 0.94)
+        .animation(LazyNotchMotion.interactiveSpring, value: viewModel.isHovered)
+        .accessibilityLabel("Codex usage remaining")
+        .accessibilityValue("\(usage.primary.remainingPercent) percent in the primary window via \(viewModel.codexHostName ?? "supported app")")
+        .help("Click to open LazyNotch · Codex: \(usage.primary.remainingPercent)% remaining via \(viewModel.codexHostName ?? "supported app")")
+    }
+
+    private var accentColor: Color {
+        Color(nsColor: viewModel.codexAccentColor)
     }
 }
 
@@ -588,37 +644,128 @@ struct ExpandedNotchContent: View {
     }
 
     var body: some View {
-        if viewModel.globalDragZone != .none {
-            GlobalDropZonesView(activeZone: viewModel.globalDragZone)
-                .frame(
-                    width: LazyNotchWindowController.dropHUDWidth,
-                    height: LazyNotchWindowController.dropHUDHeight
-                )
-                .transition(.opacity)
-        } else {
-            VStack(spacing: 2) {
-                TopBar(selectedTab: $selectedTab)
-                    .padding(.top, 12)
-                    .padding(.horizontal, 36)
-                    .morphReveal(progress)
+        VStack(spacing: 2) {
+            TopBar(
+                selectedTab: $selectedTab,
+                viewModel: viewModel,
+                showsCodexDetails: $viewModel.showsCodexDetails
+            )
+                .padding(.top, 12)
+                .padding(.horizontal, 36)
+                .morphReveal(progress)
 
-                Group {
-                    switch selectedTab {
-                    case .home:
-                        HomeRow(namespace: namespace, progress: progress, isExpanded: viewModel.isExpanded)
-                    case .shelf:
-                        LazyShelfView()
+            Group {
+                switch selectedTab {
+                case .home:
+                    if viewModel.showsCodexDetails, let usage = viewModel.codexUsage {
+                        CodexUsageDetail(usage: usage, viewModel: viewModel)
                             .morphReveal(progress)
+                    } else {
+                        HomeRow(namespace: namespace, progress: progress, isExpanded: viewModel.isExpanded)
+                    }
+                case .shelf:
+                    LazyShelfView()
+                        .morphReveal(progress)
+                }
+            }
+            .frame(maxHeight: .infinity)
+            .padding(.horizontal, 36)
+            .padding(.top, 4)
+            .padding(.bottom, selectedTab == .shelf ? 0 : 16)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .transition(.opacity)
+    }
+}
+
+private struct CodexUsageDetail: View {
+    let usage: CodexUsage
+    @ObservedObject var viewModel: ShellViewModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
+                ZStack {
+                    if let icon = viewModel.codexIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+                    } else {
+                        Circle()
+                            .fill(accentColor.opacity(0.16))
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 19, weight: .semibold))
+                            .foregroundStyle(accentColor)
                     }
                 }
-                .frame(maxHeight: .infinity)
-                .padding(.horizontal, 36)
-                .padding(.top, 4)
-                .padding(.bottom, 16)
+                .frame(width: 38, height: 38)
+                .padding(.leading, 8)
+
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Codex usage")
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(.white)
+                    Text("Remaining allowance")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(accentColor)
+                }
+
+                Spacer()
+
+                if let hostName = viewModel.codexHostName {
+                    Text("via \(hostName)")
+                        .font(.system(size: 9.5, weight: .medium))
+                        .foregroundStyle(.white.opacity(0.42))
+                        .padding(.top, 2)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
-            .transition(.opacity)
+
+            HStack(spacing: 8) {
+                usageWindowRow(title: "Primary window", window: usage.primary)
+                usageWindowRow(title: "Weekly window", window: usage.secondary)
+            }
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.top, 2)
+    }
+
+    private func usageWindowRow(title: String, window: CodexUsageWindow) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.65))
+                    .lineLimit(1)
+                Spacer()
+                Text("\(window.remainingPercent)% left")
+                    .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(accentColor)
+                    .lineLimit(1)
+            }
+
+            ProgressView(value: Double(window.remainingPercent), total: 100)
+                .tint(accentColor)
+
+            if let resetsAt = window.resetsAt {
+                Text("Resets \(RelativeDateTimeFormatter().localizedString(for: resetsAt, relativeTo: .now))")
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.38))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(.horizontal, 11)
+        .padding(.vertical, 7)
+        .background(
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+    }
+
+    private var accentColor: Color {
+        Color(nsColor: viewModel.codexAccentColor)
     }
 }
 
@@ -626,15 +773,60 @@ struct ExpandedNotchContent: View {
 
 struct TopBar: View {
     @Binding var selectedTab: ShellContentView.ShellTab
+    @ObservedObject var viewModel: ShellViewModel
+    @Binding var showsCodexDetails: Bool
     @Namespace private var tabNamespace
     @State private var gearHovered = false
 
     var body: some View {
+        HStack(spacing: 0) {
+            tabStrip
+
+            Spacer(minLength: 0)
+
+            // Keep controls out of the physical notch's center sightline.
+            Color.clear
+                .frame(width: viewModel.compactSize.width)
+                .accessibilityHidden(true)
+
+            Spacer(minLength: 0)
+
+            HStack(spacing: 4) {
+                codexControl
+
+                // Mirror button beside gear
+                MirrorButton(compact: true)
+
+                Button {
+                    SettingsWindowController.shared.showSettings()
+                } label: {
+                    Image(systemName: "gearshape.fill")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(gearHovered ? Color.white : Color.white.opacity(0.7))
+                        .frame(width: 26, height: 26)
+                        .background(
+                            Circle()
+                                .fill(gearHovered ? Color.white.opacity(0.14) : Color.clear)
+                        )
+                        .scaleEffect(gearHovered ? 1.06 : 1.0)
+                }
+                .buttonStyle(.plain)
+                .onHover { hovering in
+                    withAnimation(LazyNotchMotion.interactiveSpring) {
+                        gearHovered = hovering
+                    }
+                }
+            }
+        }
+    }
+
+    private var tabStrip: some View {
         HStack(spacing: 4) {
             ForEach(ShellContentView.ShellTab.allCases, id: \.self) { tab in
                 let isSelected = selectedTab == tab
                 Button {
                     withAnimation(LazyNotchMotion.tabSpring) {
+                        showsCodexDetails = false
                         selectedTab = tab
                     }
                 } label: {
@@ -657,164 +849,50 @@ struct TopBar: View {
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
+                .help(tab == .home ? "Open the main widget" : "Open LazyShelf")
             }
+        }
+    }
 
-            Spacer()
-
-            // Mirror button beside gear
-            MirrorButton(compact: true)
-
+    @ViewBuilder
+    private var codexControl: some View {
+        if let usage = viewModel.codexUsage {
             Button {
-                SettingsWindowController.shared.showSettings()
+                withAnimation(LazyNotchMotion.tabSpring) {
+                    viewModel.toggleCodexDetails()
+                    selectedTab = viewModel.activeTab
+                }
             } label: {
-                Image(systemName: "gearshape.fill")
-                    .font(.system(size: 14, weight: .medium))
-                    .foregroundStyle(gearHovered ? Color.white : Color.white.opacity(0.7))
-                    .frame(width: 26, height: 26)
-                    .background(
-                        Circle()
-                            .fill(gearHovered ? Color.white.opacity(0.14) : Color.clear)
-                    )
-                    .scaleEffect(gearHovered ? 1.06 : 1.0)
+                HStack(spacing: 4) {
+                    if let icon = viewModel.codexIcon {
+                        Image(nsImage: icon)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .frame(width: 13, height: 13)
+                    } else {
+                        Image(systemName: "sparkles")
+                            .font(.system(size: 11, weight: .semibold))
+                    }
+                    Text("\(usage.primary.remainingPercent)%")
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                }
+                .foregroundStyle(accentColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(
+                    Capsule()
+                        .fill(showsCodexDetails ? accentColor.opacity(0.2) : accentColor.opacity(0.1))
+                )
             }
             .buttonStyle(.plain)
-            .onHover { hovering in
-                withAnimation(LazyNotchMotion.interactiveSpring) {
-                    gearHovered = hovering
-                }
-            }
+            .help(showsCodexDetails ? "Show the main widget" : "Show Codex usage")
+            .accessibilityLabel("Codex usage")
+            .accessibilityValue("\(usage.primary.remainingPercent) percent remaining")
         }
     }
-}
 
-// MARK: - Global Drop Zones (Siri Chromatic Drop Capsule)
-
-struct GlobalDropZonesView: View {
-    let activeZone: GlobalDragZone
-    @State private var pulse = false
-
-    var body: some View {
-        HStack(spacing: 10) {
-            DropPod(
-                title: "Files Tray",
-                subtitle: "Drop to stage",
-                systemImage: "tray.and.arrow.down.fill",
-                isActive: activeZone == .tray,
-                isPulse: pulse
-            )
-
-            DropPod(
-                title: "AirDrop",
-                subtitle: "Drop to share",
-                systemImage: "airdrop",
-                isActive: activeZone == .airdrop,
-                isPulse: pulse
-            )
-        }
-        .padding(.horizontal, 14)
-        .padding(.top, 28) // Clear hardware notch
-        .padding(.bottom, 10)
-        .frame(
-            width: LazyNotchWindowController.dropHUDWidth,
-            height: LazyNotchWindowController.dropHUDHeight
-        )
-        .onAppear {
-            withAnimation(
-                .easeInOut(duration: 0.9).repeatForever(autoreverses: true)
-            ) {
-                pulse = true
-            }
-        }
-    }
-}
-
-// MARK: - Drop Pod
-
-struct DropPod: View {
-    let title: String
-    let subtitle: String
-    let systemImage: String
-    let isActive: Bool
-    let isPulse: Bool
-
-    var body: some View {
-        ZStack {
-            // Ambient luminous backlight when active
-            if isActive {
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .fill(SiriColors.horizontalGradient)
-                    .blur(radius: 8)
-                    .opacity(0.38)
-            }
-
-            // Glass background
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .fill(
-                    isActive
-                        ? Color.white.opacity(0.12)
-                        : Color.white.opacity(0.045)
-                )
-
-            // Dynamic border: Siri gradient border when active, ultra-fine glass stroke when resting
-            RoundedRectangle(cornerRadius: 15, style: .continuous)
-                .stroke(
-                    isActive
-                        ? AnyShapeStyle(SiriColors.horizontalGradient)
-                        : AnyShapeStyle(Color.white.opacity(0.12)),
-                    lineWidth: isActive ? 1.5 : 0.8
-                )
-
-            // Content
-            HStack(spacing: 10) {
-                // Icon badge with glowing aura
-                ZStack {
-                    Circle()
-                        .fill(
-                            isActive
-                                ? AnyShapeStyle(SiriColors.fullGradient.opacity(0.25))
-                                : AnyShapeStyle(Color.white.opacity(0.06))
-                        )
-                        .frame(width: 30, height: 30)
-
-                    Image(systemName: systemImage)
-                        .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(
-                            isActive
-                                ? AnyShapeStyle(SiriColors.horizontalGradient)
-                                : AnyShapeStyle(Color.white.opacity(0.72))
-                        )
-                        .scaleEffect(isActive ? (isPulse ? 1.08 : 1.0) : 1.0)
-                }
-
-                VStack(alignment: .leading, spacing: 1.5) {
-                    Text(title)
-                        .font(.system(size: 12, weight: .semibold, design: .rounded))
-                        .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.85))
-
-                    Text(subtitle)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(
-                            isActive
-                                ? Color.white.opacity(0.75)
-                                : Color.white.opacity(0.42)
-                        )
-                }
-
-                Spacer(minLength: 0)
-
-                // Active glowing indicator dot
-                if isActive {
-                    Circle()
-                        .fill(SiriColors.horizontalGradient)
-                        .frame(width: 6, height: 6)
-                        .scaleEffect(isPulse ? 1.2 : 0.8)
-                        .padding(.trailing, 2)
-                }
-            }
-            .padding(.horizontal, 11)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .scaleEffect(isActive ? 1.02 : 1.0)
-        .animation(LazyNotchMotion.interactiveSpring, value: isActive)
+    private var accentColor: Color {
+        Color(nsColor: viewModel.codexAccentColor)
     }
 }

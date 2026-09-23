@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 // MARK: - Home Row (Premium Layout)
@@ -37,12 +38,35 @@ struct HomeRow: View {
 
 // MARK: - Vinyl Artwork
 
+@MainActor
+enum MediaSourceIconResolver {
+    private static var cache: [String: NSImage] = [:]
+
+    static func icon(for track: MediaTrack?) -> NSImage? {
+        guard let track else { return nil }
+
+        let bundleIdentifier = track.bundleIdentifier ?? {
+            if track.appName == "Spotify" { return "com.spotify.client" }
+            if track.appName == "Music" || track.appName == "Apple Music" { return "com.apple.Music" }
+            return nil
+        }()
+        guard let bundleIdentifier else { return nil }
+        if let cached = cache[bundleIdentifier] { return cached }
+        guard let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleIdentifier) else { return nil }
+
+        let icon = NSWorkspace.shared.icon(forFile: url.path)
+        cache[bundleIdentifier] = icon
+        return icon
+    }
+}
+
 struct VinylArtwork: View {
     var track: MediaTrack?
     let namespace: Namespace.ID
     var progress: CGFloat = 1.0
     var isExpanded: Bool = true
     @ObservedObject private var mediaService = MediaService.shared
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovered = false
 
     init(track: MediaTrack?, namespace: Namespace.ID, progress: CGFloat = 1.0, isExpanded: Bool = true) {
@@ -56,24 +80,8 @@ struct VinylArtwork: View {
         track?.appName == "Spotify"
     }
 
-    private static var iconCache: [String: NSImage] = [:]
     private var appIcon: NSImage? {
-        guard let name = track?.appName else { return nil }
-        if let cached = Self.iconCache[name] { return cached }
-        let bundleId: String
-        if isSpotify {
-            bundleId = "com.spotify.client"
-        } else if name == "Music" || name == "Apple Music" {
-            bundleId = "com.apple.Music"
-        } else {
-            bundleId = name
-        }
-        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
-            let icon = NSWorkspace.shared.icon(forFile: url.path)
-            Self.iconCache[name] = icon
-            return icon
-        }
-        return nil
+        MediaSourceIconResolver.icon(for: track)
     }
 
     var body: some View {
@@ -107,17 +115,16 @@ struct VinylArtwork: View {
                         // Use the same blur curve in both directions: opening resolves
                         // from blurred to sharp, and closing defocuses before the cover
                         // reaches the compact live-activity endpoint.
-                        .modifier(BlurModifier(radius: (1.0 - progress) * 8))
+                        .blur(radius: reduceMotion ? 0 : (1.0 - progress) * LazyNotchMotion.heroBlurRadius)
                         .scaleEffect(isHovered && isExpanded ? 1.03 : 1.0)
                         .animation(.spring(response: 0.30, dampingFraction: 0.70), value: isHovered)
 
-                    // The expanded app badge has no compact destination. Remove it with
-                    // the expanded endpoint instead of leaving a colored afterimage behind.
-                    if isExpanded {
-                        appIconBadge
-                            .opacity(Double(progress))
-                            .padding(4)
-                    }
+                    // Keep the badge mounted through the close so it defocuses with the
+                    // artwork instead of disappearing sharply at the state flip.
+                    appIconBadge
+                        .opacity(Double(progress))
+                        .blur(radius: reduceMotion ? 0 : (1.0 - progress) * LazyNotchMotion.heroBlurRadius)
+                        .padding(4)
                 }
                 .frame(width: side, height: side)
             }
@@ -133,7 +140,8 @@ struct VinylArtwork: View {
         if let image = mediaService.cachedArtwork {
             Image(nsImage: image)
                 .resizable()
-                .aspectRatio(contentMode: .fill)
+                .aspectRatio(1, contentMode: .fill)
+                .clipped()
         } else {
             fallbackVinyl
         }
@@ -220,14 +228,14 @@ struct MediaWidget: View {
                 Spacer(minLength: 0)
 
                 // Title
-                Text(mediaService.currentTrack?.title ?? "Nothing Playing")
+                Text(mediaService.currentTrack?.displayTitle ?? "Nothing Playing")
                     .font(.system(size: 14, weight: .bold))
                     .foregroundStyle(.white)
                     .lineLimit(1)
                     .truncationMode(.tail)
 
                 // Artist
-                Text(mediaService.currentTrack?.artist ?? "Open a media app")
+                Text(mediaService.currentTrack?.displayArtist ?? "Open a media app")
                     .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(Color.white.opacity(0.55))
                     .lineLimit(1)
@@ -318,7 +326,7 @@ struct MediaControlButton: View {
                             ? Color.white.opacity(isHovered ? 0.18 : 0.10)
                             : Color.white.opacity(isHovered ? 0.10 : 0.0))
                 )
-                .scaleEffect(isPressed ? 0.92 : (isHovered ? 1.06 : 1.0))
+                .scaleEffect(isPressed ? 0.96 : (isHovered ? 1.03 : 1.0))
         }
         .buttonStyle(.plain)
         .simultaneousGesture(
