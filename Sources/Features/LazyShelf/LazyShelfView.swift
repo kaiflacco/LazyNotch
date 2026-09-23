@@ -25,7 +25,7 @@ public struct LazyShelfView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 6) {
             if store.items.isEmpty {
                 emptyDropTarget
             } else {
@@ -91,7 +91,7 @@ public struct LazyShelfView: View {
     // MARK: - Empty Drop Target
 
     private var emptyDropTarget: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             ZStack {
                 Circle()
                     .fill(isTargeted ? AnyShapeStyle(Color.lnAccentBlue.opacity(0.18)) : AnyShapeStyle(Color.white.opacity(0.07)))
