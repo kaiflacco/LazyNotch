@@ -1,6 +1,6 @@
 import AppKit
 import Combine
-import EventKit
+@preconcurrency import EventKit
 import Foundation
 
 public struct UpcomingCalendarEvent: Sendable, Equatable {
@@ -10,16 +10,7 @@ public struct UpcomingCalendarEvent: Sendable, Equatable {
     public let isAllDay: Bool
     
     public var formattedTime: String {
-        if isAllDay {
-            return "All Day"
-        }
-        let formatter = DateFormatter()
-        formatter.timeStyle = .short
-        return formatter.string(from: startDate)
-    }
-    
-    public var displayText: String {
-        "\(title) · \(formattedTime)"
+        isAllDay ? "All Day" : startDate.formatted(date: .omitted, time: .shortened)
     }
 }
 
@@ -34,15 +25,16 @@ public final class CalendarService: ObservableObject {
     private var eventStore = EKEventStore()
     private var cancellables = Set<AnyCancellable>()
     
-    public static func dayKey(for date: Date) -> String {
+    nonisolated private static let dayKeyFormatter: DateFormatter = {
         let formatter = DateFormatter()
-        // Pin locale + calendar so the key is stable regardless of the user's
-        // calendar (e.g. a non-Gregorian user calendar would shift "yyyy")
-        // and regardless of 12/24-hour or digit-system locale settings.
         formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.calendar = Calendar(identifier: .gregorian)
         formatter.dateFormat = "yyyy-MM-dd"
-        return formatter.string(from: date)
+        return formatter
+    }()
+
+    nonisolated public static func dayKey(for date: Date) -> String {
+        dayKeyFormatter.string(from: date)
     }
     
     private init() {
@@ -212,32 +204,35 @@ public final class CalendarService: ObservableObject {
             return
         }
         
-        let predicate = eventStore.predicateForEvents(withStart: startDate, end: endDate, calendars: nil)
-        let ekEvents = eventStore.events(matching: predicate).sorted { $0.startDate < $1.startDate }
-        
-        var grouped: [String: [UpcomingCalendarEvent]] = [:]
-        for event in ekEvents {
-            let key = Self.dayKey(for: event.startDate)
-            let item = UpcomingCalendarEvent(
-                title: event.title ?? "Event",
-                startDate: event.startDate,
-                endDate: event.endDate,
-                isAllDay: event.isAllDay
-            )
-            grouped[key, default: []].append(item)
+        let store = self.eventStore
+        DispatchQueue.global(qos: .userInitiated).async {
+            let predicate = store.predicateForEvents(withStart: startDate, end: endDate, calendars: nil)
+            let ekEvents = store.events(matching: predicate).sorted { $0.startDate < $1.startDate }
+
+            var grouped: [String: [UpcomingCalendarEvent]] = [:]
+            for event in ekEvents {
+                let key = CalendarService.dayKey(for: event.startDate)
+                let item = UpcomingCalendarEvent(
+                    title: event.title ?? "Event",
+                    startDate: event.startDate,
+                    endDate: event.endDate,
+                    isAllDay: event.isAllDay
+                )
+                grouped[key, default: []].append(item)
+            }
+
+            let todayKey = CalendarService.dayKey(for: today)
+            let todayEvents = grouped[todayKey] ?? []
+            let upcoming = grouped.values
+                .flatMap { $0 }
+                .filter { $0.endDate >= today }
+                .min { $0.startDate < $1.startDate }
+            let next = upcoming ?? todayEvents.first
+
+            Task { @MainActor in
+                self.weekEvents = grouped
+                self.nextEvent = next
+            }
         }
-        self.weekEvents = grouped
-        
-        let todayKey = Self.dayKey(for: today)
-        let todayEvents = grouped[todayKey] ?? []
-        // Prefer the soonest event that hasn't ended yet across the whole fetched
-        // window (-4…+4 days). Previously this only considered TODAY's events, so
-        // once the day's last meeting ended the widget went blank even though
-        // tomorrow's events were already fetched and cached in `weekEvents`.
-        let upcoming = grouped.values
-            .flatMap { $0 }
-            .filter { $0.endDate >= today }
-            .min { $0.startDate < $1.startDate }
-        self.nextEvent = upcoming ?? todayEvents.first
     }
 }

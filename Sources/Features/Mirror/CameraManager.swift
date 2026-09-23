@@ -132,10 +132,6 @@ public final class CameraManager: ObservableObject {
     private let worker = CaptureSessionWorker()
     private var cancellables = Set<AnyCancellable>()
 
-    public var captureSession: AVCaptureSession {
-        worker.session
-    }
-
     public init() {
         checkPermission()
 

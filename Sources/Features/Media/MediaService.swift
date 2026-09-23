@@ -8,7 +8,6 @@ public final class MediaService: ObservableObject {
     public static let shared = MediaService()
 
     @Published public var currentTrack: MediaTrack?
-    @Published public var isAvailable: Bool = false
     @Published public var cachedArtwork: NSImage?
 
     private var pollTimer: Timer?
@@ -72,8 +71,6 @@ public final class MediaService: ObservableObject {
             guard !Task.isCancelled, let self = self, self.currentRefreshID == refreshID else { return }
 
             self.currentTrack = track
-            self.isAvailable = track != nil
-
             if track?.artworkUrl != self.lastArtworkUrl {
                 self.lastArtworkUrl = track?.artworkUrl
                 if let urlStr = track?.artworkUrl, let url = URL(string: urlStr) {
@@ -252,7 +249,6 @@ public final class MediaService: ObservableObject {
             isPlaying: isPlaying,
             duration: dur,
             elapsedTime: pos,
-            artwork: nil,
             artworkUrl: artworkUrl,
             appName: appName
         )

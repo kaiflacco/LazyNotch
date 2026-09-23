@@ -4,13 +4,18 @@ import SwiftUI
 
 struct HomeRow: View {
     let namespace: Namespace.ID
-    var revealed: Bool = true
-    @ObservedObject var mediaService = MediaService.shared
+    var progress: CGFloat = 1.0
+    var isExpanded: Bool = true
+    init(namespace: Namespace.ID, progress: CGFloat = 1.0, isExpanded: Bool = true) {
+        self.namespace = namespace
+        self.progress = progress
+        self.isExpanded = isExpanded
+    }
 
     var body: some View {
         HStack(alignment: .center, spacing: 0) {
             // Left: Full media player
-            MediaWidget(namespace: namespace, revealed: revealed)
+            MediaWidget(namespace: namespace, progress: progress, isExpanded: isExpanded)
                 .frame(maxWidth: .infinity)
 
             // Hairline divider
@@ -18,13 +23,13 @@ struct HomeRow: View {
                 .fill(Color.white.opacity(0.08))
                 .frame(width: 0.5)
                 .padding(.vertical, 14)
-                .morphReveal(revealed)
+                .morphReveal(progress)
 
             // Right: Calendar
             CalendarWidget()
                 .frame(width: 216)
                 .padding(.leading, 14)
-                .morphReveal(revealed)
+                .morphReveal(progress)
         }
         .frame(maxHeight: .infinity)
     }
@@ -35,27 +40,38 @@ struct HomeRow: View {
 struct VinylArtwork: View {
     var track: MediaTrack?
     let namespace: Namespace.ID
-    var revealed: Bool = true
+    var progress: CGFloat = 1.0
+    var isExpanded: Bool = true
     @ObservedObject private var mediaService = MediaService.shared
     @State private var isHovered = false
+
+    init(track: MediaTrack?, namespace: Namespace.ID, progress: CGFloat = 1.0, isExpanded: Bool = true) {
+        self.track = track
+        self.namespace = namespace
+        self.progress = progress
+        self.isExpanded = isExpanded
+    }
 
     private var isSpotify: Bool {
         track?.appName == "Spotify"
     }
 
+    private static var iconCache: [String: NSImage] = [:]
     private var appIcon: NSImage? {
+        guard let name = track?.appName else { return nil }
+        if let cached = Self.iconCache[name] { return cached }
+        let bundleId: String
         if isSpotify {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.spotify.client") {
-                return NSWorkspace.shared.icon(forFile: url.path)
-            }
-        } else if track?.appName == "Music" || track?.appName == "Apple Music" {
-            if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: "com.apple.Music") {
-                return NSWorkspace.shared.icon(forFile: url.path)
-            }
+            bundleId = "com.spotify.client"
+        } else if name == "Music" || name == "Apple Music" {
+            bundleId = "com.apple.Music"
+        } else {
+            bundleId = name
         }
-        if let appName = track?.appName,
-           let appUrl = NSWorkspace.shared.urlForApplication(withBundleIdentifier: appName) {
-            return NSWorkspace.shared.icon(forFile: appUrl.path)
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+            let icon = NSWorkspace.shared.icon(forFile: url.path)
+            Self.iconCache[name] = icon
+            return icon
         }
         return nil
     }
@@ -66,47 +82,42 @@ struct VinylArtwork: View {
         } label: {
             GeometryReader { geo in
                 let side = geo.size.height
-                ZStack(alignment: .bottomTrailing) {
-                    // Ambient glow (fades in with the rest of the content)
-                    artworkContent
-                        .frame(width: side, height: side)
-                        .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
-                        .blur(radius: 20)
-                        .opacity(revealed ? 0.55 : 0)
-                        .scaleEffect(1.15)
-                        .allowsHitTesting(false)
+                let cornerRadius = side * 0.18
 
-                    // Real Album Artwork — the hero element. It flies from the live-activity
-                    // strip via matchedGeometryEffect. Blurred while in flight (resolving to
-                    // sharp over contentMorphSpring) so the motion reads as a smooth morph —
-                    // a sharp tiny cover travelling looks laggy, a blurred one looks alive.
+                ZStack(alignment: .bottomTrailing) {
+                    // The halo belongs to the expanded artwork only. Leaving it mounted
+                    // during collapse creates the detached glow seen beside the shell.
+                    if isExpanded {
+                        artworkContent
+                            .frame(width: side, height: side)
+                            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                            .blur(radius: 20 * progress)
+                            .opacity(Double(progress) * 0.55)
+                            .scaleEffect(1.15)
+                            .allowsHitTesting(false)
+                    }
+
+                    // Keep the real artwork mounted until the shell finishes collapsing.
+                    // CompactNotchContent is mounted at the same time, so SwiftUI can
+                    // animate this view all the way back to the live-activity cover.
                     artworkContent
-                        .matchedGeometryEffect(id: "albumArt", in: namespace)
-                        .blur(radius: revealed ? 0 : 12)
+                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                        .matchedGeometryEffect(id: "albumArt", in: namespace, isSource: isExpanded)
                         .frame(width: side, height: side)
-                        .clipShape(RoundedRectangle(cornerRadius: side * 0.18, style: .continuous))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: side * 0.18, style: .continuous)
-                                .stroke(
-                                    LinearGradient(
-                                        colors: [
-                                            Color.white.opacity(isHovered ? 0.40 : 0.18),
-                                            Color.white.opacity(isHovered ? 0.10 : 0.04)
-                                        ],
-                                        startPoint: .topLeading,
-                                        endPoint: .bottomTrailing
-                                    ),
-                                    lineWidth: 0.75
-                                )
-                        )
-                        .shadow(color: .black.opacity(0.55), radius: 12, y: 5)
-                        .scaleEffect(isHovered ? 1.03 : 1.0)
+                        // Use the same blur curve in both directions: opening resolves
+                        // from blurred to sharp, and closing defocuses before the cover
+                        // reaches the compact live-activity endpoint.
+                        .modifier(BlurModifier(radius: (1.0 - progress) * 8))
+                        .scaleEffect(isHovered && isExpanded ? 1.03 : 1.0)
                         .animation(.spring(response: 0.30, dampingFraction: 0.70), value: isHovered)
 
-                    // App icon badge
-                    appIconBadge
-                        .opacity(revealed ? 1 : 0)
-                        .offset(x: 5, y: 5)
+                    // The expanded app badge has no compact destination. Remove it with
+                    // the expanded endpoint instead of leaving a colored afterimage behind.
+                    if isExpanded {
+                        appIconBadge
+                            .opacity(Double(progress))
+                            .padding(4)
+                    }
                 }
                 .frame(width: side, height: side)
             }
@@ -120,21 +131,6 @@ struct VinylArtwork: View {
     @ViewBuilder
     private var artworkContent: some View {
         if let image = mediaService.cachedArtwork {
-            Image(nsImage: image)
-                .resizable()
-                .aspectRatio(contentMode: .fill)
-        } else if let artUrl = track?.artworkUrl, let url = URL(string: artUrl) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().aspectRatio(contentMode: .fill)
-                case .failure, .empty:
-                    fallbackVinyl
-                @unknown default:
-                    fallbackVinyl
-                }
-            }
-        } else if let image = track?.artwork {
             Image(nsImage: image)
                 .resizable()
                 .aspectRatio(contentMode: .fill)
@@ -191,8 +187,15 @@ struct VinylArtwork: View {
 
 struct MediaWidget: View {
     let namespace: Namespace.ID
-    var revealed: Bool = true
+    var progress: CGFloat = 1.0
+    var isExpanded: Bool = true
     @ObservedObject var mediaService = MediaService.shared
+
+    init(namespace: Namespace.ID, progress: CGFloat = 1.0, isExpanded: Bool = true) {
+        self.namespace = namespace
+        self.progress = progress
+        self.isExpanded = isExpanded
+    }
 
     private var isPlaying: Bool {
         mediaService.currentTrack?.isPlaying ?? false
@@ -207,7 +210,7 @@ struct MediaWidget: View {
             // Album art — reacts to track changes via cachedArtwork and id(title)
             // NOT morph-revealed: the artwork is the matchedGeometryEffect hero element
             // that flies in from the live-activity strip and must stay visible mid-flight.
-            VinylArtwork(track: mediaService.currentTrack, namespace: namespace, revealed: revealed)
+            VinylArtwork(track: mediaService.currentTrack, namespace: namespace, progress: progress, isExpanded: isExpanded)
                 .frame(maxHeight: .infinity)
                 .aspectRatio(1, contentMode: .fit)
                 .id(mediaService.currentTrack?.title ?? "")
@@ -280,7 +283,7 @@ struct MediaWidget: View {
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
-            .morphReveal(revealed)
+            .morphReveal(progress)
         }
         .frame(maxHeight: .infinity)
     }
@@ -405,22 +408,34 @@ struct CalendarWidget: View {
         }
     }
 
-    private var monthAndYear: String {
+    private static let monthFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "MMMM"
-        return formatter.string(from: selectedDate)
+        return formatter
+    }()
+
+    private static let weekdayLetterFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEEE"
+        return formatter
+    }()
+
+    private static let weekdayLongFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "EEEE"
+        return formatter
+    }()
+
+    private var monthAndYear: String {
+        Self.monthFormatter.string(from: selectedDate)
     }
 
     private func weekdayLetter(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEEE"
-        return formatter.string(from: date).uppercased()
+        Self.weekdayLetterFormatter.string(from: date).uppercased()
     }
 
     private func weekdayLong(_ date: Date) -> String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "EEEE"
-        return formatter.string(from: date)
+        Self.weekdayLongFormatter.string(from: date)
     }
 
     var body: some View {
@@ -635,40 +650,6 @@ private struct DayCell: View {
         .buttonStyle(.plain)
         .onHover { h in
             isHovered = h
-        }
-    }
-}
-
-// MARK: - Shelf tab placeholder
-
-struct ShelfPlaceholder: View {
-    @State private var isHovered = false
-
-    var body: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 24, style: .continuous)
-                .fill(Color.white.opacity(isHovered ? 0.06 : 0.03))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 24, style: .continuous)
-                        .strokeBorder(Color.white.opacity(isHovered ? 0.20 : 0.10), style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
-                )
-                .animation(.easeInOut(duration: 0.2), value: isHovered)
-
-            VStack(spacing: 6) {
-                Image(systemName: "tray.and.arrow.down")
-                    .font(.system(size: 22, weight: .medium))
-                    .foregroundStyle(isHovered ? Color.white : Color.white.opacity(0.6))
-                    .scaleEffect(isHovered ? 1.08 : 1.0)
-                    .animation(LazyNotchMotion.interactiveSpring, value: isHovered)
-
-                Text("Drop files here to stage them")
-                    .font(.system(size: 13.5, weight: .medium))
-                    .foregroundStyle(Color.lnTextSecondary)
-            }
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onHover { hovering in
-            isHovered = hovering
         }
     }
 }

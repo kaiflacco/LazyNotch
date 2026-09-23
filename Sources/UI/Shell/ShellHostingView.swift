@@ -185,8 +185,8 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
             return super.hitTest(point) ?? self
         } else {
             // When notch is collapsed: allow clicking the notch or live activity in navbar to open the Nook.
-            let activeWidth = viewModel.hasActiveLiveActivity ? (viewModel.compactSize.width + 76) : viewModel.compactSize.width
-            let activeHeight = viewModel.compactSize.height
+            let activeWidth = viewModel.hasActiveLiveActivity ? (viewModel.compactSize.width + 104) : (viewModel.compactSize.width + 24)
+            let activeHeight = viewModel.hasActiveLiveActivity ? (viewModel.compactSize.height + 16) : (viewModel.compactSize.height + 8)
             let notchBounds = NSRect(
                 x: (bounds.width - activeWidth) / 2,
                 y: 0,

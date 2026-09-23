@@ -7,6 +7,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
 
+        // Pre-warm calendar and media services at startup so first-click/hover doesn't hitch
+        _ = CalendarService.shared
+        _ = MediaService.shared
+
         displayCoordinator = DisplayCoordinator()
         windowController = LazyNotchWindowController(displayCoordinator: displayCoordinator)
         windowController.show()

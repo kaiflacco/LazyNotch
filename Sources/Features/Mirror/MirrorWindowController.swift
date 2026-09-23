@@ -8,9 +8,6 @@ public final class MirrorWindowController: NSObject, NSWindowDelegate {
     private var localEventMonitor: Any?
     private var globalEventMonitor: Any?
 
-    public static let mirrorWidth: CGFloat = 380
-    public static let mirrorHeight: CGFloat = 285
-
     public var isVisible: Bool {
         window?.isVisible ?? false
     }

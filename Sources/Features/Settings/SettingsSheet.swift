@@ -57,29 +57,13 @@ public struct SettingsSheet: View {
             .padding(.top, 16)
             .padding(.bottom, 12)
 
-            // Segmented Picker
-            HStack(spacing: 4) {
+            Picker("Settings", selection: $selectedTab) {
                 ForEach(SettingsTab.allCases, id: \.self) { tab in
-                    let isSelected = selectedTab == tab
-                    Button {
-                        withAnimation(LazyNotchMotion.tabSpring) {
-                            selectedTab = tab
-                        }
-                    } label: {
-                        Text(tab.rawValue)
-                            .font(.system(size: 11.5, weight: isSelected ? .bold : .medium))
-                            .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.6))
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 5)
-                            .background(
-                                isSelected ? Capsule().fill(Color.white.opacity(0.16)) : Capsule().fill(Color.clear)
-                            )
-                    }
-                    .buttonStyle(.plain)
+                    Text(tab.rawValue).tag(tab)
                 }
             }
-            .padding(3)
-            .background(Capsule().fill(Color.white.opacity(0.06)))
+            .labelsHidden()
+            .pickerStyle(.segmented)
             .padding(.horizontal, 20)
             .padding(.bottom, 14)
 

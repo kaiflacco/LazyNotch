@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import QuickLook
 
 /// Model representing a staged file in LazyShelf.
 public struct LazyShelfItem: Identifiable, Equatable {
@@ -8,14 +7,12 @@ public struct LazyShelfItem: Identifiable, Equatable {
     public let url: URL
     public let name: String
     public let sizeString: String
-    public let dateAdded: Date
     public let icon: NSImage
 
     public init(url: URL) {
         self.id = UUID()
         self.url = url
         self.name = url.lastPathComponent
-        self.dateAdded = Date()
         self.icon = NSWorkspace.shared.icon(forFile: url.path)
 
         // Calculate friendly file size

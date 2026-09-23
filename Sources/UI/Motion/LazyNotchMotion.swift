@@ -1,37 +1,23 @@
 import SwiftUI
 
-/// Centralized motion configuration for LazyNotch.
-/// Implements the physics parameters from the Master Specification:
-/// - Opening: Fast initial response (~250-350ms main expansion, 50-100ms settle),
-///   subtle controlled overshoot, low bounce, quick settling.
-/// - Closing: Snappy contraction (~180-250ms), minimal overshoot.
-/// - Micro-interactions: Restrained, tactile spring responses.
+/// Shared shell and interaction timing.
 public enum LazyNotchMotion {
     // MARK: - Core Spring Constants
 
-    /// NotchNook / Dynamic Island opening spring: quick expansion with ONE clearly visible
-    /// overshoot (~4-6% peak at ~0.25s, settled ~0.6s) — measured from NotchNook's
-    /// click-to-expand motion. Bouncy but clean: no multi-oscillation wobble.
-    public static let openResponse: Double = 0.40
-    public static let openDamping: Double = 0.72
+    /// Allows the shell to grow before content sharpens, with a visible, single overshoot.
+    public static let openResponse: Double = 0.50
+    public static let openDamping: Double = 0.66
 
-    /// Closing spring: mirrors the opening spring exactly (same response/damping) so
-    /// hover-out collapses with the same bouncy, single-overshoot feel as the open —
-    /// symmetric motion like NotchNook instead of a stiff snap shut.
-    public static let closeResponse: Double = 0.40
-    public static let closeDamping: Double = 0.72
+    /// A softer return into the compact strip; response is not total settling time.
+    public static let closeResponse: Double = 0.45
+    public static let closeDamping: Double = 0.82
 
-    /// Content choreography spring: Slides down smoothly from the notch opening.
-    public static let contentResponse: Double = 0.32
-    public static let contentDamping: Double = 0.76
-
-    /// Content morph spring (NotchNook-style): deliberately slow, lightly damped entrance so
-    /// the blur phase is actually visible (~1s) — content stays soft/out-of-focus while it
-    /// settles into the freshly-grown shell with a slight grow-overshoot, then snaps sharp.
-    public static let contentMorphResponse: Double = 0.62
-    public static let contentMorphDamping: Double = 0.80
-    /// Beat between the shell starting to grow and the content following it.
-    public static let contentMorphDelay: Double = 0.10
+    /// Content sharpens in 0.45s, ahead of the final shell settling.
+    public static let contentRevealDelay: Double = 0.08
+    public static let contentRevealDuration: Double = 0.37
+    public static let contentExitDuration: Double = 0.20
+    public static let collapseDelay: Double = 0.06
+    public static let collapseSettleDuration: Double = 0.55
 
     /// Tactile hover tension: Bottle-neck swell when cursor touches the notch.
     /// Damped enough that hover settles in one soft motion (NotchNook-style), no wobble.
@@ -40,7 +26,7 @@ public enum LazyNotchMotion {
 
     // MARK: - Shell Morphing Springs
 
-    /// Opening spring: Fast initial burst, controlled organic overshoot, quick settling.
+    /// Opening spring: gradual expansion with a visible, controlled overshoot.
     public static let openingSpring: Animation = .spring(
         response: openResponse,
         dampingFraction: openDamping,
@@ -66,40 +52,10 @@ public enum LazyNotchMotion {
         blendDuration: 0.0
     )
 
-    // MARK: - Content Choreography Springs
-
-    /// Slow, blur-friendly entrance used for the compact → expanded content morph.
-    public static let contentMorphSpring: Animation = .spring(
-        response: contentMorphResponse,
-        dampingFraction: contentMorphDamping,
-        blendDuration: 0.0
-    )
-
-    /// Content entrance spring: Moves down into place smoothly during shell expansion.
-    public static let contentEntranceSpring: Animation = .spring(
-        response: contentResponse,
-        dampingFraction: contentDamping,
-        blendDuration: 0.0
-    )
-
-    /// Content exit spring: Rapidly recedes as the shell contracts.
-    public static let contentExitSpring: Animation = .spring(
-        response: 0.18,
-        dampingFraction: 0.90,
-        blendDuration: 0.0
-    )
-
     // MARK: - Micro-interaction Springs
 
     /// Interactive spring for buttons, icons, and hover responses.
     public static let interactiveSpring: Animation = .spring(
-        response: hoverResponse,
-        dampingFraction: hoverDamping,
-        blendDuration: 0.0
-    )
-
-    /// Tactile hover spring for pre-expansion bottle neck elasticity.
-    public static let hoverSpring: Animation = .spring(
         response: hoverResponse,
         dampingFraction: hoverDamping,
         blendDuration: 0.0

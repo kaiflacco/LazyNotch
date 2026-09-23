@@ -1,4 +1,3 @@
-import AppKit
 import Foundation
 
 /// Represents the currently playing media item.
@@ -9,7 +8,6 @@ public struct MediaTrack: Equatable, @unchecked Sendable {
     public let isPlaying: Bool
     public let duration: TimeInterval
     public let elapsedTime: TimeInterval
-    public let artwork: NSImage?
     public let artworkUrl: String?
     public let appName: String
 
@@ -20,7 +18,6 @@ public struct MediaTrack: Equatable, @unchecked Sendable {
         isPlaying: Bool,
         duration: TimeInterval,
         elapsedTime: TimeInterval,
-        artwork: NSImage? = nil,
         artworkUrl: String? = nil,
         appName: String = "Music"
     ) {
@@ -30,7 +27,6 @@ public struct MediaTrack: Equatable, @unchecked Sendable {
         self.isPlaying = isPlaying
         self.duration = duration
         self.elapsedTime = elapsedTime
-        self.artwork = artwork
         self.artworkUrl = artworkUrl
         self.appName = appName
     }

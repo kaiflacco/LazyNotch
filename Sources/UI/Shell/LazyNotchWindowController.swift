@@ -25,15 +25,6 @@ final class ShellViewModel: ObservableObject {
 /// on the GPU via SwiftUI and Metal at up to 120Hz ProMotion without WindowServer IPC jitter.
 @MainActor
 final class LazyNotchWindowController {
-    /// Fallback compact size matching physical notch if unknown.
-    static let fallbackClosedSize = CGSize(width: 176, height: 34)
-
-    /// Compact media pill hanging below the physical notch (NotchNook-style).
-    static let pillWidth: CGFloat = 300
-    static let pillHeight: CGFloat = 36
-    /// How far the pill hangs below the visible notch surface.
-    static let pillVisibleHeight: CGFloat = 30
-
     // MARK: - Open geometry (sleek compact notch island)
 
     static let openWidth: CGFloat = 620
@@ -51,7 +42,7 @@ final class LazyNotchWindowController {
 
     // MARK: - Hover hysteresis (cursor polling)
 
-    static let hoverEnterGrace: TimeInterval = 0.12 // Deliberate, smooth opening response without accidental hair-trigger
+    static let hoverEnterGrace: TimeInterval = 0.08 // Snappy, deliberate response without accidental hair-trigger
     static let hoverLeaveGrace: TimeInterval = 0.22 // Comfortable departure grace
     static let cursorPollInterval: TimeInterval = 0.016 // 60Hz high-frequency cursor tracking
 
@@ -63,6 +54,7 @@ final class LazyNotchWindowController {
 
     private var hoverTimer: Timer?
     private var enterArmedAt: Date?
+    private var disarmArmedAt: Date?
     private var leaveArmedAt: Date?
     /// While set, the island stays expanded on the Tray regardless of cursor position
     /// (used while the file picker is open / right after staging files).
@@ -212,24 +204,25 @@ final class LazyNotchWindowController {
         let anchor = closedSize(for: display)
         let frame = display.screen.frame
         if viewModel.hasActiveLiveActivity {
-            // Live activity is positioned in the top navbar flanking the notch
-            let width: CGFloat = anchor.width + 76
-            let height = anchor.height
+            // Live activity is positioned in the top navbar flanking the notch:
+            // 42pt wings on each side + 10pt droop + comfortable padding for fast cursor sweeps
+            let width: CGFloat = anchor.width + 104
+            let height: CGFloat = anchor.height + 16
             return CGRect(
                 x: frame.midX - width / 2,
                 y: frame.maxY - height,
                 width: width,
-                height: height
+                height: height + 10
             )
         } else {
-            // Idle notch: strictly within the physical notch cutout
-            let width = anchor.width
-            let height = anchor.height
+            // Idle notch: physical notch cutout with generous horizontal buffer and ceiling buffer
+            let width: CGFloat = anchor.width + 24
+            let height: CGFloat = anchor.height + 8
             return CGRect(
                 x: frame.midX - width / 2,
                 y: frame.maxY - height,
                 width: width,
-                height: height
+                height: height + 10
             )
         }
     }
@@ -246,50 +239,9 @@ final class LazyNotchWindowController {
             x: frame.midX - currentWidth / 2,
             y: frame.maxY - currentHeight,
             width: currentWidth,
-            height: currentHeight
+            height: currentHeight + 10
         )
         return contentRect.insetBy(dx: -8, dy: -4).contains(mouse)
-    }
-
-    /// The exact visible screen bounds of the notch right now.
-    private func activeNotchScreenRect() -> CGRect {
-        guard let display = displayCoordinator.primaryDisplay else { return .null }
-        let frame = display.screen.frame
-        if viewModel.globalDragZone != .none {
-            return CGRect(
-                x: frame.midX - Self.dropHUDWidth / 2,
-                y: frame.maxY - Self.dropHUDHeight,
-                width: Self.dropHUDWidth,
-                height: Self.dropHUDHeight
-            )
-        } else if viewModel.isExpanded {
-            let width = Self.openWidth
-            let height = Self.openHeight
-            return CGRect(
-                x: frame.midX - width / 2,
-                y: frame.maxY - height,
-                width: width,
-                height: height
-            )
-        } else if viewModel.hasActiveLiveActivity {
-            let width: CGFloat = viewModel.compactSize.width + 76
-            let height = viewModel.compactSize.height
-            return CGRect(
-                x: frame.midX - width / 2,
-                y: frame.maxY - height,
-                width: width,
-                height: height
-            )
-        } else {
-            let width = viewModel.compactSize.width
-            let height = viewModel.compactSize.height
-            return CGRect(
-                x: frame.midX - width / 2,
-                y: frame.maxY - height,
-                width: width,
-                height: height
-            )
-        }
     }
 
     private func startCursorWatcher() {
@@ -310,7 +262,7 @@ final class LazyNotchWindowController {
             x: frame.midX - currentWidth / 2,
             y: frame.maxY - currentHeight,
             width: currentWidth,
-            height: currentHeight
+            height: currentHeight + 10
         )
     }
 
@@ -416,11 +368,14 @@ final class LazyNotchWindowController {
         updateMousePassThrough()
 
         if viewModel.isHovered != engaged {
-            viewModel.isHovered = engaged
+            withAnimation(LazyNotchMotion.interactiveSpring) {
+                viewModel.isHovered = engaged
+            }
         }
 
         if engaged {
             leaveArmedAt = nil
+            disarmArmedAt = nil
             if !viewModel.isExpanded {
                 let openOnHover = UserDefaults.standard.object(forKey: "openOnHover") as? Bool ?? true
                 let canAutoExpand = openOnHover && !viewModel.hasActiveLiveActivity
@@ -428,7 +383,15 @@ final class LazyNotchWindowController {
                     wasExpandedByDrag = true
                     expand()
                 } else if canAutoExpand {
-                    if let armed = enterArmedAt, Date().timeIntervalSince(armed) >= Self.hoverEnterGrace {
+                    // Quick-trigger if cursor hit the top screen ceiling (deliberate gesture)
+                    let isAtCeiling: Bool
+                    if let display = displayCoordinator.primaryDisplay {
+                        isAtCeiling = mouse.y >= (display.screen.frame.maxY - 3)
+                    } else {
+                        isAtCeiling = false
+                    }
+                    let effectiveGrace: TimeInterval = isAtCeiling ? 0.04 : Self.hoverEnterGrace
+                    if let armed = enterArmedAt, Date().timeIntervalSince(armed) >= effectiveGrace {
                         expand()
                     } else if enterArmedAt == nil {
                         enterArmedAt = Date()
@@ -436,7 +399,15 @@ final class LazyNotchWindowController {
                 }
             }
         } else {
-            enterArmedAt = nil
+            // Tolerate a 1-to-2 poll glitch (50ms) during fast sweeps near boundaries
+            if let disarm = disarmArmedAt {
+                if Date().timeIntervalSince(disarm) >= 0.05 {
+                    enterArmedAt = nil
+                }
+            } else {
+                disarmArmedAt = Date()
+            }
+
             // Hold the island open while a hold-open request is active (file picker / post-staging feedback).
             let isHeldOpen = Date() < (holdOpenUntil ?? .distantPast)
             if viewModel.isExpanded, !isHeldOpen {
@@ -454,6 +425,8 @@ final class LazyNotchWindowController {
 
     func expand() {
         guard !viewModel.isExpanded else { return }
+        enterArmedAt = nil
+        disarmArmedAt = nil
         updateMousePassThrough()
         panel.orderFrontRegardless()
         withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
