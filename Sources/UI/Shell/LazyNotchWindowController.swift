@@ -53,7 +53,7 @@ final class LazyNotchWindowController {
     // MARK: - Open geometry (sleek compact notch island)
 
     static let openWidth: CGFloat = 620
-    static let openHeight: CGFloat = 200
+    static let openHeight: CGFloat = 180
 
     // MARK: - Shadow canvas padding (prevents unclipped SwiftUI drop shadows)
 

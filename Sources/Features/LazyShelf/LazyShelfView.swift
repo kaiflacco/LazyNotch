@@ -25,7 +25,7 @@ public struct LazyShelfView: View {
     public init() {}
 
     public var body: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 8) {
             if store.items.isEmpty {
                 emptyDropTarget
             } else {
@@ -155,7 +155,7 @@ public struct LazyShelfView: View {
                 + CGFloat(tileCount - 1) * ShelfTileMetrics.spacing
             let contentWidth = min(rowWidth, proxy.size.width)
 
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 4) {
                 HStack(alignment: .center, spacing: 8) {
                     Text("Staged files")
                         .font(.system(size: 12, weight: .semibold, design: .rounded))
@@ -205,7 +205,7 @@ public struct LazyShelfView: View {
         Button {
             airDropStagedFiles()
         } label: {
-            VStack(spacing: 5) {
+            VStack(spacing: 4) {
                 ZStack {
                     // A restrained blue halo gives AirDrop the same lifted feel as a cover.
                     RoundedRectangle(cornerRadius: 13, style: .continuous)
@@ -249,7 +249,7 @@ public struct LazyShelfView: View {
         Button {
             addFilesViaPanel()
         } label: {
-            VStack(spacing: 5) {
+            VStack(spacing: 4) {
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .fill(Color.white.opacity(isTargeted ? 0.08 : 0.03))
                     .overlay {
