@@ -83,9 +83,13 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
     override func hitTest(_ point: NSPoint) -> NSView? {
         guard let viewModel else { return nil }
 
-        // AppKit supplies `point` in this view's local coordinate space. Converting it
-        // from the superview shifts the hit region and makes the shell feel misaligned.
-        let localPoint = point
+        // AppKit delivers the physical mouse point with a bottom-origin Y coordinate at
+        // this hosting boundary, while the SwiftUI shell is laid out from the top.
+        // Normalize once so the visual shell and its hit region use the same origin.
+        let localPoint = NSPoint(
+            x: point.x,
+            y: bounds.minY + bounds.maxY - point.y
+        )
 
         if viewModel.isExpanded {
             let activeWidth = LazyNotchWindowController.openWidth
@@ -99,7 +103,7 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
             guard notchBounds.contains(localPoint) else {
                 return nil
             }
-            return super.hitTest(point) ?? self
+            return super.hitTest(localPoint) ?? self
         } else {
             // When notch is collapsed: allow clicking the notch or live activity in navbar to open the Nook.
             let activeWidth = viewModel.isActivityContentVisible ? (viewModel.compactSize.width + 104) : (viewModel.compactSize.width + 24)
@@ -113,7 +117,7 @@ final class ShellHostingView: NSHostingView<ShellContentView> {
             guard notchBounds.contains(localPoint) else {
                 return nil
             }
-            return super.hitTest(point) ?? self
+            return super.hitTest(localPoint) ?? self
         }
     }
 }

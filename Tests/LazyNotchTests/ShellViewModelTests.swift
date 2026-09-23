@@ -102,6 +102,10 @@ final class ShellViewModelTests: XCTestCase {
         XCTAssertTrue(hostingView.isFlipped)
         XCTAssertEqual(hostingView.bounds.size, CGSize(width: 770, height: 380))
         XCTAssertTrue(viewModel.isActivityContentVisible)
-        XCTAssertNotNil(hostingView.hitTest(NSPoint(x: hostingView.bounds.midX, y: 16)))
+        let physicalClickPoint = NSPoint(
+            x: hostingView.bounds.midX,
+            y: hostingView.bounds.maxY - 16
+        )
+        XCTAssertNotNil(hostingView.hitTest(physicalClickPoint))
     }
 }
