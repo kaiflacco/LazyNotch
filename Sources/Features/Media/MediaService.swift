@@ -69,6 +69,38 @@ public final class MediaService: ObservableObject {
 
     private nonisolated static let browserResultSeparator = "␞"
 
+    nonisolated static func shouldProbeBrowsers(
+        frontmostBundleIdentifier: String?,
+        remoteBundleIdentifier: String?,
+        runningBundleIdentifiers: Set<String>
+    ) -> Bool {
+        browserBundleIdentifiers.contains(frontmostBundleIdentifier ?? "") ||
+            remoteBundleIdentifier.map(browserBundleIdentifiers.contains) == true ||
+            runningBundleIdentifiers.contains(where: browserBundleIdentifiers.contains)
+    }
+
+    nonisolated static func prioritizedMediaBundleIdentifiers(
+        frontmostBundleIdentifier: String?,
+        runningBundleIdentifiers: Set<String>
+    ) -> [String] {
+        var ordered: [String] = []
+
+        func appendIfRunning(_ bundleIdentifier: String) {
+            guard runningBundleIdentifiers.contains(bundleIdentifier),
+                  !ordered.contains(bundleIdentifier) else { return }
+            ordered.append(bundleIdentifier)
+        }
+
+        if let frontmostBundleIdentifier,
+           browserBundleIdentifiers.contains(frontmostBundleIdentifier) ||
+           knownNativeBundleIdentifiers.contains(frontmostBundleIdentifier) {
+            appendIfRunning(frontmostBundleIdentifier)
+        }
+        browserBundleOrder.forEach(appendIfRunning)
+        knownNativeBundleIdentifiers.forEach(appendIfRunning)
+        return ordered
+    }
+
     public init() {
         startMonitoring()
     }
@@ -169,11 +201,15 @@ public final class MediaService: ObservableObject {
 
     private func applyRemoteTrack(_ remoteTrack: MediaTrack, refreshID: UInt64) {
         let frontmostBundleIdentifier = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
-        let browserBundleIdentifier = Self.browserBundleIdentifiers.contains(frontmostBundleIdentifier ?? "")
-            ? frontmostBundleIdentifier
-            : (remoteTrack.bundleIdentifier.flatMap { Self.browserBundleIdentifiers.contains($0) ? $0 : nil })
+        let runningBundleIdentifiers = Set(
+            NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
+        )
 
-        if browserBundleIdentifier != nil {
+        if Self.shouldProbeBrowsers(
+            frontmostBundleIdentifier: frontmostBundleIdentifier,
+            remoteBundleIdentifier: remoteTrack.bundleIdentifier,
+            runningBundleIdentifiers: runningBundleIdentifiers
+        ) {
             refreshTask = Task { [weak self] in
                 let detectedTrack = await Task.detached(priority: .userInitiated) {
                     // A paused browser record can be stale while Spotify or a
@@ -463,8 +499,10 @@ public final class MediaService: ObservableObject {
            mediaKeywords.contains(where: { frontmost.lowercased().contains($0) || (appsByBundleIdentifier[frontmost]?.lowercased().contains($0) ?? false) }) {
             appendIfRunning(frontmost)
         }
-        knownNativeBundleIdentifiers.forEach(appendIfRunning)
-        browserBundleOrder.forEach(appendIfRunning)
+        Self.prioritizedMediaBundleIdentifiers(
+            frontmostBundleIdentifier: NSWorkspace.shared.frontmostApplication?.bundleIdentifier,
+            runningBundleIdentifiers: Set(appsByBundleIdentifier.keys)
+        ).forEach(appendIfRunning)
 
         // Small keyword filter keeps the generic AppleScript fallback away from unrelated apps.
         for app in runningApps where mediaKeywords.contains(where: { app.name.lowercased().contains($0) || app.bundleIdentifier.lowercased().contains($0) }) {

@@ -105,6 +105,20 @@ struct ShellContentView: View {
     enum ShellTab: String, CaseIterable {
         case home = "Home"
         case shelf = "Shelf"
+
+        var iconName: String {
+            switch self {
+            case .home: return "house.fill"
+            case .shelf: return "tray.full.fill"
+            }
+        }
+
+        var helpText: String {
+            switch self {
+            case .home: return "Open the overview"
+            case .shelf: return "Open Lazy Shelf"
+            }
+        }
     }
 
     var body: some View {
@@ -120,6 +134,7 @@ struct ShellContentView: View {
 /// Text and controls sharpen in place while the album cover follows its own hero path.
 struct MorphRevealModifier: ViewModifier, Animatable {
     nonisolated var progress: CGFloat // 0.0 = hidden/blurred, 1.0 = revealed/sharp
+    let blurRadius: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     nonisolated var animatableData: CGFloat {
@@ -130,13 +145,13 @@ struct MorphRevealModifier: ViewModifier, Animatable {
     func body(content: Content) -> some View {
         content
             .opacity(Double(progress))
-            .blur(radius: reduceMotion ? 0 : (1.0 - progress) * LazyNotchMotion.contentBlurRadius)
+            .blur(radius: reduceMotion ? 0 : (1.0 - progress) * blurRadius)
     }
 }
 
 extension View {
-    func morphReveal(_ progress: CGFloat) -> some View {
-        modifier(MorphRevealModifier(progress: progress))
+    func morphReveal(_ progress: CGFloat, blurRadius: CGFloat = LazyNotchMotion.contentBlurRadius) -> some View {
+        modifier(MorphRevealModifier(progress: progress, blurRadius: blurRadius))
     }
 
 }
@@ -161,10 +176,15 @@ struct MorphingNotchIsland: View {
     // Live Activity sizing geometry
     static let liveActivityTopRadius: CGFloat = 10.0
     static let liveActivityBottomRadius: CGFloat = 18.0
+    static let expandedBottomRadius: CGFloat = 52.0
     static let liveActivityVisibleWingWidth: CGFloat = 30.0
     static let liveActivityBorderMargin: CGFloat = 2.0
     static var liveActivityWingExtension: CGFloat {
         liveActivityVisibleWingWidth + liveActivityTopRadius + liveActivityBorderMargin // 42.0pt
+    }
+
+    static func expandedCurveRadius(for height: CGFloat) -> CGFloat {
+        min(expandedBottomRadius * height / LazyNotchWindowController.openHeight, height / 2)
     }
 
     private var targetWidth: CGFloat {
@@ -181,6 +201,8 @@ struct MorphingNotchIsland: View {
     private var targetHeight: CGFloat {
         if shellExpanded {
             return LazyNotchWindowController.openHeight
+        } else if viewModel.isMediaCoverHovered {
+            return viewModel.compactSize.height + 28
         } else if viewModel.isActivityContentVisible {
             // Subtle, sleek hover droop without excessive empty space at bottom
             return viewModel.compactSize.height + (viewModel.isHovered ? 5 : 0)
@@ -191,7 +213,7 @@ struct MorphingNotchIsland: View {
 
     private var targetTopRadius: CGFloat {
         if shellExpanded {
-            return 26.0
+            return 34.0
         } else if viewModel.isActivityContentVisible {
             return Self.liveActivityTopRadius
         } else {
@@ -201,7 +223,7 @@ struct MorphingNotchIsland: View {
 
     private var targetBottomRadius: CGFloat {
         if shellExpanded {
-            return 42.0
+            return Self.expandedBottomRadius
         } else if viewModel.isActivityContentVisible {
             return Self.liveActivityBottomRadius + (viewModel.isHovered ? 1.5 : 0)
         } else {
@@ -253,8 +275,8 @@ struct MorphingNotchIsland: View {
                 if viewModel.isActivityContentVisible && (!viewModel.isExpanded || expandedContentMounted) {
                     CompactNotchContent(viewModel: viewModel, namespace: heroNamespace)
                         .frame(
-                            width: viewModel.compactSize.width + Self.liveActivityWingExtension * 2,
-                            height: viewModel.compactSize.height,
+                            width: targetWidth,
+                            height: targetHeight,
                             alignment: .top
                         )
                         .opacity(Double(compactRevealProgress))
@@ -402,6 +424,7 @@ struct MorphingNotchIsland: View {
             value: shellExpanded
         )
         .animation(LazyNotchMotion.pillMorphSpring, value: viewModel.isActivityContentVisible)
+        .animation(LazyNotchMotion.pillMorphSpring, value: viewModel.isMediaCoverHovered)
         .animation(LazyNotchMotion.interactiveSpring, value: viewModel.isHovered)
     }
 }
@@ -447,13 +470,15 @@ struct CompactNotchContent: View {
             let wingWidth = MorphingNotchIsland.liveActivityVisibleWingWidth
             let contentHeight = viewModel.compactSize.height
             let totalWidth = viewModel.compactSize.width + (topRadius + borderMargin + wingWidth) * 2
+            let titleStart = topRadius + borderMargin + wingWidth / 2
 
-            Button {
-                withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
-                    viewModel.openHome()
-                }
-            } label: {
-            HStack(spacing: 0) {
+            ZStack(alignment: .topLeading) {
+                Button {
+                    withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
+                        viewModel.openHome()
+                    }
+                } label: {
+                HStack(spacing: 0) {
                 // 1. Left top-ear flare & 2px border margin inset
                 Spacer()
                     .frame(width: topRadius + borderMargin, height: contentHeight)
@@ -532,20 +557,68 @@ struct CompactNotchContent: View {
                 // 5. Right top-ear flare & 2px border margin inset
                 Spacer()
                     .frame(width: topRadius + borderMargin, height: contentHeight)
+                }
+                    .frame(width: totalWidth, height: contentHeight)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(NotchStripPressStyle())
+                .frame(width: totalWidth, height: contentHeight, alignment: .topLeading)
+
+                if viewModel.isMediaCoverHovered,
+                   let track = mediaService.currentTrack {
+                    HStack(spacing: 5) {
+                        mediaControlButton(
+                            systemName: "backward.end.fill",
+                            label: "Previous track",
+                            action: mediaService.previousTrack
+                        )
+
+                        ScrollingTrackLabel(
+                            content: trackMetadata(for: track),
+                            accessibilityLabel: trackAccessibilityLabel(for: track),
+                            width: totalWidth - titleStart - 8 - 56 - 10
+                        )
+
+                        mediaControlButton(
+                            systemName: "forward.end.fill",
+                            label: "Next track",
+                            action: mediaService.nextTrack
+                        )
+                    }
+                    .frame(width: totalWidth - titleStart - 8, alignment: .leading)
+                    .offset(x: titleStart, y: contentHeight + 3)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
             }
-                .frame(width: totalWidth, height: contentHeight)
-                .contentShape(Rectangle())
-            }
-            // Press squish lives in NotchStripPressStyle (cover + waveform flatten on
-            // mouse-down, like NotchNook) — a real Button, so the click can never be
-            // eaten by a competing drag gesture.
-            .buttonStyle(NotchStripPressStyle())
+            .frame(
+                width: totalWidth,
+                height: contentHeight + (viewModel.isMediaCoverHovered ? 28 : 0),
+                alignment: .topLeading
+            )
+            .contentShape(Rectangle())
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .contentShape(Rectangle())
             .opacity(viewModel.isHovered ? 1.0 : 0.94)
             .animation(LazyNotchMotion.interactiveSpring, value: viewModel.isHovered)
             .help("Click to open LazyNotch and view live activity")
         }
+    }
+
+    private func mediaControlButton(
+        systemName: String,
+        label: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemName)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.72))
+                .frame(width: 24, height: 22)
+                .background(Color.white.opacity(0.08), in: Capsule())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+        .help(label)
     }
 
     private var fallbackAppIcon: some View {
@@ -557,6 +630,112 @@ struct CompactNotchContent: View {
                     .font(.system(size: 5.5, weight: .bold))
                     .foregroundStyle(.white)
             )
+    }
+
+    private func trackMetadata(for track: MediaTrack) -> Text {
+        let title = Text(track.displayTitle)
+            .foregroundStyle(.white.opacity(0.68))
+        let artist = Text("  •  \(track.displayArtist)")
+            .foregroundStyle(.white.opacity(0.44))
+        let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if album.isEmpty {
+            return title + artist
+        }
+
+        return title
+            + artist
+            + Text("  •  \(album)")
+                .foregroundStyle(.white.opacity(0.36))
+    }
+
+    private func trackAccessibilityLabel(for track: MediaTrack) -> String {
+        let album = track.album.trimmingCharacters(in: .whitespacesAndNewlines)
+        return album.isEmpty
+            ? "\(track.displayTitle), \(track.displayArtist)"
+            : "\(track.displayTitle), \(track.displayArtist), \(album)"
+    }
+}
+
+struct ScrollingTrackLabel: View {
+    let content: Text
+    let accessibilityLabel: String
+    let width: CGFloat
+    var font: Font = .system(size: 10.5, weight: .medium)
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var contentWidth: CGFloat = 0
+    @State private var offset: CGFloat = 0
+
+    private var isOverflowing: Bool { contentWidth > width }
+
+    var body: some View {
+        ZStack(alignment: .leading) {
+            if isOverflowing {
+                HStack(spacing: 24) {
+                    ForEach(0..<6, id: \.self) { _ in
+                        content
+                    }
+                }
+                .fixedSize(horizontal: true, vertical: false)
+                .offset(x: offset)
+            } else {
+                content
+                    .frame(width: width, alignment: .leading)
+            }
+        }
+        .font(font)
+        .lineLimit(1)
+        .frame(width: width, height: 16, alignment: .leading)
+        .clipped()
+        .background {
+            content
+                .font(font)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .background {
+                    GeometryReader { proxy in
+                        Color.clear.preference(key: TrackLabelWidthKey.self, value: proxy.size.width)
+                    }
+                }
+                .opacity(0)
+        }
+        .mask {
+            if isOverflowing {
+                LinearGradient(
+                    colors: [.clear, .black.opacity(0.82), .black, .black.opacity(0.82), .clear],
+                    startPoint: .leading,
+                    endPoint: .trailing
+                )
+            } else {
+                Rectangle()
+            }
+        }
+        .onPreferenceChange(TrackLabelWidthKey.self) { measuredWidth in
+            contentWidth = measuredWidth
+            restartAnimation(for: measuredWidth)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(accessibilityLabel)
+    }
+
+    private func restartAnimation(for measuredWidth: CGFloat) {
+        offset = 0
+        guard !reduceMotion, measuredWidth > width else { return }
+
+        let travel = measuredWidth + 24
+        let duration = max(4.5, Double(travel) * 0.055)
+        withAnimation(.linear(duration: duration).repeatForever(autoreverses: false)) {
+            offset = -travel
+        }
+    }
+}
+
+private struct TrackLabelWidthKey: PreferenceKey {
+    static let defaultValue: CGFloat = 0
+
+    static func reduce(value: inout CGFloat, nextValue: () -> CGFloat) {
+        value = max(value, nextValue())
     }
 }
 
@@ -635,6 +814,7 @@ struct ExpandedNotchContent: View {
     @Binding var selectedTab: ShellContentView.ShellTab
     let namespace: Namespace.ID
     var progress: CGFloat = 1.0
+    private let contentInset: CGFloat = 44
 
     init(viewModel: ShellViewModel, selectedTab: Binding<ShellContentView.ShellTab>, namespace: Namespace.ID, progress: CGFloat = 1.0) {
         self.viewModel = viewModel
@@ -659,8 +839,8 @@ struct ExpandedNotchContent: View {
                         .morphReveal(progress)
                 }
             }
-            .padding(.horizontal, 36)
-            .padding(.top, 44)
+            .padding(.horizontal, contentInset)
+            .padding(.top, 52)
             .padding(.bottom, 16)
 
             TopBar(
@@ -670,8 +850,10 @@ struct ExpandedNotchContent: View {
             )
             .frame(height: 26, alignment: .top)
             .padding(.top, 12)
-            .padding(.horizontal, 36)
-            .morphReveal(progress)
+            .padding(.horizontal, contentInset)
+            // The Codex icon travels with the expanded header; use the same hero blur
+            // curve as the album cover while the main widget closes.
+            .morphReveal(progress, blurRadius: LazyNotchMotion.heroBlurRadius)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         .transition(.opacity)
@@ -791,26 +973,26 @@ struct TopBar: View {
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 4) {
+            HStack(spacing: 5) {
                 codexControl
 
-                // Mirror button beside gear
                 MirrorButton(compact: true)
 
                 Button {
                     SettingsWindowController.shared.showSettings()
                 } label: {
-                    Image(systemName: "gearshape.fill")
-                        .font(.system(size: 14, weight: .medium))
+                    Image(systemName: "gearshape")
+                        .font(.system(size: 14, weight: .semibold))
                         .foregroundStyle(gearHovered ? Color.white : Color.white.opacity(0.7))
                         .frame(width: 26, height: 26)
                         .background(
-                            Circle()
-                                .fill(gearHovered ? Color.white.opacity(0.14) : Color.clear)
+                            RoundedRectangle(cornerRadius: 9, style: .continuous)
+                                .fill(gearHovered ? Color.white.opacity(0.14) : Color.white.opacity(0.06))
                         )
                         .scaleEffect(gearHovered ? 1.06 : 1.0)
                 }
                 .buttonStyle(.plain)
+                .help("Open Settings")
                 .onHover { hovering in
                     withAnimation(LazyNotchMotion.interactiveSpring) {
                         gearHovered = hovering
@@ -831,27 +1013,28 @@ struct TopBar: View {
                     }
                 } label: {
                     HStack(spacing: 4.5) {
-                        Image(systemName: tab == .home ? "house.fill" : "square.stack.fill")
-                            .font(.system(size: 11, weight: .medium))
+                        Image(systemName: tab.iconName)
+                            .font(.system(size: 11, weight: .semibold))
                         Text(tab.rawValue)
-                            .font(.system(size: 13, weight: .medium))
+                            .font(.system(size: 12, weight: .semibold))
                     }
                     .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.55))
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
+                    .padding(.vertical, 6)
                     .background {
                         if isSelected {
                             Capsule()
-                                .fill(Color.white.opacity(0.18))
+                                .fill(Color.white.opacity(0.16))
                                 .matchedGeometryEffect(id: "activeTab", in: tabNamespace)
                         }
                     }
                     .contentShape(Capsule())
                 }
                 .buttonStyle(.plain)
-                .help(tab == .home ? "Open the main widget" : "Open LazyShelf")
+                .help(tab.helpText)
             }
         }
+        .padding(3)
     }
 
     @ViewBuilder

@@ -64,21 +64,19 @@ public struct LazyShelfView: View {
     private var emptyDropTarget: some View {
         ZStack {
             if isShelfTargeted {
-                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                NotchShape(topCornerRadius: 0, bottomCornerRadius: 42)
                     .fill(ShelfVisuals.glow.opacity(0.18))
                     .blur(radius: 10)
             }
 
-            RoundedRectangle(cornerRadius: 18, style: .continuous)
-                .fill(Color.white.opacity(isShelfTargeted ? 0.07 : 0.025))
+            NotchShape(topCornerRadius: 0, bottomCornerRadius: 42)
+                .fill(Color.white.opacity(isShelfTargeted ? 0.06 : 0.02))
                 .overlay {
-                    if isShelfTargeted {
-                        RoundedRectangle(cornerRadius: 18, style: .continuous)
-                            .strokeBorder(
-                                ShelfVisuals.glow,
-                                style: StrokeStyle(lineWidth: 1.3, dash: [5, 4])
-                            )
-                    }
+                    NotchShape(topCornerRadius: 0, bottomCornerRadius: 42)
+                        .stroke(
+                            isShelfTargeted ? AnyShapeStyle(ShelfVisuals.glow) : AnyShapeStyle(Color.white.opacity(0.12)),
+                            style: StrokeStyle(lineWidth: 1, dash: [6, 7], dashPhase: 1)
+                        )
                 }
 
             HStack(spacing: 9) {
@@ -105,7 +103,7 @@ public struct LazyShelfView: View {
     }
 
     private var stagedContent: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 8) {
             HStack(spacing: 5) {
                 Text("\(store.items.count)")
                     .font(.system(size: 10, weight: .bold, design: .rounded))
@@ -125,14 +123,10 @@ public struct LazyShelfView: View {
                 .foregroundStyle(.white.opacity(0.42))
                 .buttonStyle(.plain)
             }
-            .padding(.horizontal, 2)
 
-            HStack(spacing: 8) {
+            HStack(spacing: 10) {
                 AirDropDock(store: store)
-
-                Divider()
-                    .overlay(Color.white.opacity(0.08))
-                    .frame(height: 56)
+                    .padding(.leading, 8)
 
                 ScrollViewReader { proxy in
                     ScrollView(.horizontal, showsIndicators: false) {
@@ -164,6 +158,18 @@ public struct LazyShelfView: View {
                     }
                 }
             }
+            .padding(.vertical, 8)
+            .background {
+                NotchShape(topCornerRadius: 0, bottomCornerRadius: 42)
+                    .fill(Color.black.opacity(0.25))
+                    .overlay {
+                        NotchShape(topCornerRadius: 0, bottomCornerRadius: 42)
+                            .stroke(
+                                Color.white.opacity(0.12),
+                                style: StrokeStyle(lineWidth: 1, dash: [6, 7], dashPhase: 1)
+                            )
+                    }
+            }
         }
     }
 
@@ -171,18 +177,10 @@ public struct LazyShelfView: View {
         Button {
             addFilesViaPanel()
         } label: {
-            RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(Color.white.opacity(0.035))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .strokeBorder(Color.white.opacity(0.1), style: StrokeStyle(lineWidth: 1, dash: [4, 3]))
-                }
-                .overlay {
-                    Image(systemName: "plus")
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(.white.opacity(0.38))
-                }
-                .frame(width: 56, height: 74)
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.white.opacity(0.38))
+                .frame(width: 78, height: 74)
         }
         .buttonStyle(.plain)
         .help("Add files from disk")
@@ -270,42 +268,25 @@ public struct LazyShelfView: View {
 private struct AirDropDock: View {
     @ObservedObject var store: LazyShelfStore
     @State private var isTargeted = false
-    @State private var isHovered = false
 
     var body: some View {
         Button {
             store.sendAllViaAirDrop()
         } label: {
-            HStack(spacing: 8) {
-                icon
-
-                VStack(alignment: .leading, spacing: 1) {
-                    Text("AirDrop")
-                        .font(.system(size: 11.5, weight: .semibold))
-                        .foregroundStyle(.white)
-                    Text(subtitle)
-                        .font(.system(size: 9.5, weight: .medium))
-                        .foregroundStyle(.white.opacity(0.48))
-                        .lineLimit(1)
-                }
-            }
-            .frame(width: 104, height: 74)
-            .background {
-                RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .fill(Color.white.opacity(isHovered ? 0.11 : 0.07))
+            ZStack {
+                Circle()
+                    .fill(Color.black)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 16, style: .continuous)
-                            .strokeBorder(
-                                isTargeted ? AnyShapeStyle(ShelfVisuals.glow) : AnyShapeStyle(Color.white.opacity(0.1)),
-                                lineWidth: isTargeted ? 1.5 : 0.8
-                            )
+                        Circle()
+                            .strokeBorder(Color.white.opacity(0.28), lineWidth: 1)
                     }
-                    .shadow(color: isTargeted ? ShelfVisuals.blue.opacity(0.45) : .clear, radius: 10)
+
+                icon
             }
+            .frame(width: 62, height: 62)
             .scaleEffect(isTargeted ? 1.025 : 1)
         }
         .buttonStyle(.plain)
-        .onHover { isHovered = $0 }
         .onDrop(
             of: [ShelfDrag.type.identifier, UTType.fileURL.identifier, UTType.item.identifier],
             isTargeted: $isTargeted
@@ -322,34 +303,29 @@ private struct AirDropDock: View {
             return true
         }
         .animation(LazyNotchMotion.interactiveSpring, value: isTargeted)
-        .animation(LazyNotchMotion.interactiveSpring, value: isHovered)
+        .accessibilityLabel("AirDrop")
+        .accessibilityValue(subtitle)
         .help("Send all staged files with AirDrop, or drop files here")
     }
 
     @ViewBuilder
     private var icon: some View {
         ZStack {
-            Circle()
-                .fill(Color.white)
-                .frame(width: 34, height: 34)
-
             switch store.airDropState {
             case .idle:
-                Image(systemName: "dot.radiowaves.left.and.right")
-                    .font(.system(size: 16, weight: .medium))
-                    .foregroundStyle(Color(nsColor: .systemBlue))
+                AirDropIcon(color: .white)
             case .progress:
                 ProgressView()
                     .controlSize(.small)
-                    .tint(Color(nsColor: .systemBlue))
+                    .tint(.white)
             case .success:
                 Image(systemName: "checkmark")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Color(nsColor: .systemBlue))
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
             case .failure:
                 Image(systemName: "exclamationmark")
-                    .font(.system(size: 15, weight: .bold))
-                    .foregroundStyle(Color(nsColor: .systemOrange))
+                    .font(.system(size: 18, weight: .bold))
+                    .foregroundStyle(.white)
             }
         }
         .contentTransition(.symbolEffect(.replace))
@@ -368,13 +344,51 @@ private struct AirDropDock: View {
     }
 }
 
+private struct AirDropIcon: View {
+    let color: Color
+
+    var body: some View {
+        Canvas { context, size in
+            let center = CGPoint(x: size.width / 2, y: size.height / 2)
+            let scale = (min(size.width, size.height) - 4) / 28
+
+            for radius in [6.5, 10.0, 13.5] {
+                var arc = Path()
+                arc.addArc(
+                    center: center,
+                    radius: radius * scale,
+                    startAngle: .degrees(135),
+                    endAngle: .degrees(405),
+                    clockwise: false
+                )
+                context.stroke(
+                    arc,
+                    with: .color(color),
+                    style: StrokeStyle(lineWidth: 2.6 * scale, lineCap: .round)
+                )
+            }
+
+            let dotRadius = 2.4 * scale
+            context.fill(
+                Path(ellipseIn: CGRect(
+                    x: center.x - dotRadius,
+                    y: center.y - dotRadius,
+                    width: dotRadius * 2,
+                    height: dotRadius * 2
+                )),
+                with: .color(color)
+            )
+        }
+        .frame(width: 32, height: 32)
+    }
+}
+
 private struct StagedItemCard: View {
     let item: LazyShelfItem
     @ObservedObject var store: LazyShelfStore
     @State private var isHovered = false
 
     private var isSelected: Bool { store.selectedItemIDs.contains(item.id) }
-    private var isFocused: Bool { store.focusedItemID == item.id }
 
     var body: some View {
         VStack(spacing: 4) {
@@ -394,21 +408,7 @@ private struct StagedItemCard: View {
         .frame(width: 78, height: 74)
         .background {
             RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .fill(Color.white.opacity(isHovered ? 0.12 : 0.065))
-        }
-        .overlay {
-            RoundedRectangle(cornerRadius: 16, style: .continuous)
-                .strokeBorder(
-                    isSelected ? Color(nsColor: .systemBlue).opacity(0.85) : Color.white.opacity(isHovered ? 0.18 : 0.08),
-                    lineWidth: isSelected ? 1.5 : 0.8
-                )
-        }
-        .overlay {
-            if isFocused && !isSelected {
-                RoundedRectangle(cornerRadius: 17, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.42), lineWidth: 1)
-                    .padding(-2)
-            }
+                .fill(Color.white.opacity(isSelected ? 0.12 : (isHovered ? 0.08 : 0.035)))
         }
         .scaleEffect(isHovered ? 1.015 : 1)
         .contentShape(RoundedRectangle(cornerRadius: 16, style: .continuous))

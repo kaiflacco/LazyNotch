@@ -18,22 +18,26 @@ final class ShellViewModel: ObservableObject {
     @Published var codexHostName: String?
     @Published var showsCodexLiveActivity = false
     @Published var showsCodexDetails = false
+    @Published var isMediaCoverHovered = false
     @Published var activeTab: ShellContentView.ShellTab = .home
     @Published var compactSize: CGSize = CGSize(width: 186, height: 32)
 
     func openHome() {
+        isMediaCoverHovered = false
         activeTab = .home
         showsCodexDetails = false
         isExpanded = true
     }
 
     func openShelf() {
+        isMediaCoverHovered = false
         activeTab = .shelf
         showsCodexDetails = false
         isExpanded = true
     }
 
     func close() {
+        isMediaCoverHovered = false
         showsCodexDetails = false
         isExpanded = false
     }
@@ -115,6 +119,9 @@ final class LazyNotchWindowController {
             let showCodexLiveActivity = showCodexUsage && codexUsage != nil && codingAppIsActive
             self?.viewModel.codexUsage = showCodexUsage ? codexUsage : nil
             self?.viewModel.showsCodexLiveActivity = showCodexLiveActivity
+            if showCodexLiveActivity || !isPlaying {
+                self?.viewModel.isMediaCoverHovered = false
+            }
             if !showCodexUsage {
                 self?.viewModel.showsCodexDetails = false
             }
@@ -280,6 +287,16 @@ final class LazyNotchWindowController {
         guard let display = displayCoordinator.primaryDisplay else { return .null }
         let anchor = closedSize(for: display)
         let frame = display.screen.frame
+        if viewModel.isMediaCoverHovered {
+            let width: CGFloat = anchor.width + 104
+            let height: CGFloat = anchor.height + 40
+            return CGRect(
+                x: frame.midX - width / 2,
+                y: frame.maxY - height,
+                width: width,
+                height: height + 10
+            )
+        }
         if viewModel.isActivityContentVisible {
             // Live activity is positioned in the top navbar flanking the notch:
             // 42pt wings on each side + 10pt droop + comfortable padding for fast cursor sweeps
@@ -301,6 +318,44 @@ final class LazyNotchWindowController {
                 width: width,
                 height: height + 10
             )
+        }
+    }
+
+    private func compactMediaCoverRect() -> CGRect {
+        guard let display = displayCoordinator.primaryDisplay else { return .null }
+        let anchor = closedSize(for: display)
+        let frame = display.screen.frame
+        let compactWidth = anchor.width + MorphingNotchIsland.liveActivityWingExtension * 2
+        let leftEdge = frame.midX - compactWidth / 2
+        let coverCenterX = leftEdge
+            + MorphingNotchIsland.liveActivityTopRadius
+            + MorphingNotchIsland.liveActivityBorderMargin
+            + MorphingNotchIsland.liveActivityVisibleWingWidth / 2
+        return CGRect(
+            x: coverCenterX - 15,
+            y: frame.maxY - anchor.height,
+            width: 30,
+            height: anchor.height
+        )
+    }
+
+    private func updateMediaCoverHover(at mouse: CGPoint) {
+        let canPeek = viewModel.isActivityContentVisible
+            && !viewModel.showsCodexLiveActivity
+            && !viewModel.isExpanded
+
+        if !canPeek {
+            viewModel.isMediaCoverHovered = false
+        } else if viewModel.isMediaCoverHovered {
+            if !hotZoneRect().contains(mouse) {
+                withAnimation(LazyNotchMotion.pillMorphSpring) {
+                    viewModel.isMediaCoverHovered = false
+                }
+            }
+        } else if compactMediaCoverRect().contains(mouse) {
+            withAnimation(LazyNotchMotion.pillMorphSpring) {
+                viewModel.isMediaCoverHovered = true
+            }
         }
     }
 
@@ -376,6 +431,8 @@ final class LazyNotchWindowController {
         if isSystemDragInProgress && NSEvent.pressedMouseButtons == 0 {
             isSystemDragInProgress = false
         }
+
+        updateMediaCoverHover(at: mouse)
 
         let engaged = isSystemDragInProgress
             ? viewModel.isExpanded && (expandedInteractiveRect()?.contains(mouse) ?? false)

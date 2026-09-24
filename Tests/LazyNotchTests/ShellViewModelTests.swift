@@ -6,12 +6,14 @@ import XCTest
 final class ShellViewModelTests: XCTestCase {
     func testOpeningShelfSelectsShelfAndExpands() {
         let viewModel = ShellViewModel()
+        viewModel.isMediaCoverHovered = true
 
         viewModel.openShelf()
 
         XCTAssertTrue(viewModel.isExpanded)
         XCTAssertEqual(viewModel.activeTab, .shelf)
         XCTAssertFalse(viewModel.showsCodexDetails)
+        XCTAssertFalse(viewModel.isMediaCoverHovered)
     }
 
     func testCodexDetailsAlwaysUsesHomeAndToggles() {
@@ -39,6 +41,28 @@ final class ShellViewModelTests: XCTestCase {
         XCTAssertEqual(track.displayTitle, "Nothing Playing")
         XCTAssertEqual(track.displayArtist, "Open a media app")
         XCTAssertEqual(track.title, "  ")
+    }
+
+    func testPlayingBackgroundBrowserIsProbedWhenSpotifyIsMediaRemoteSource() {
+        let runningBundleIdentifiers: Set<String> = [
+            "com.google.Chrome",
+            "com.spotify.client"
+        ]
+
+        XCTAssertTrue(
+            MediaService.shouldProbeBrowsers(
+                frontmostBundleIdentifier: "com.google.antigravity",
+                remoteBundleIdentifier: "com.spotify.client",
+                runningBundleIdentifiers: runningBundleIdentifiers
+            )
+        )
+        XCTAssertEqual(
+            MediaService.prioritizedMediaBundleIdentifiers(
+                frontmostBundleIdentifier: "com.google.antigravity",
+                runningBundleIdentifiers: runningBundleIdentifiers
+            ),
+            ["com.google.Chrome", "com.spotify.client"]
+        )
     }
 
     func testCalendarEventsGroupByLocalDayAndStayChronological() {

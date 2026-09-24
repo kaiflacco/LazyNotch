@@ -14,7 +14,7 @@ struct HomeRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 0) {
+        HStack(alignment: .center, spacing: 14) {
             // Left: Full media player
             MediaWidget(namespace: namespace, progress: progress, isExpanded: isExpanded)
                 .frame(maxWidth: .infinity)
@@ -29,7 +29,7 @@ struct HomeRow: View {
             // Right: Calendar
             CalendarWidget()
                 .frame(width: 216)
-                .padding(.leading, 14)
+                .frame(maxHeight: .infinity)
                 .morphReveal(progress)
         }
         .frame(maxHeight: .infinity)
@@ -91,6 +91,17 @@ struct VinylArtwork: View {
             GeometryReader { geo in
                 let side = geo.size.height
                 let cornerRadius = side * 0.18
+                let artworkShape = UnevenRoundedRectangle(
+                    cornerRadii: RectangleCornerRadii(
+                        topLeading: cornerRadius,
+                        bottomLeading: isExpanded
+                            ? MorphingNotchIsland.expandedCurveRadius(for: side)
+                            : cornerRadius,
+                        bottomTrailing: cornerRadius,
+                        topTrailing: cornerRadius
+                    ),
+                    style: .continuous
+                )
 
                 ZStack(alignment: .bottomTrailing) {
                     // The halo belongs to the expanded artwork only. Leaving it mounted
@@ -98,7 +109,7 @@ struct VinylArtwork: View {
                     if isExpanded {
                         artworkContent
                             .frame(width: side, height: side)
-                            .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                            .clipShape(artworkShape)
                             .blur(radius: 20 * progress)
                             .opacity(Double(progress) * 0.55)
                             .scaleEffect(1.15)
@@ -109,7 +120,7 @@ struct VinylArtwork: View {
                     // CompactNotchContent is mounted at the same time, so SwiftUI can
                     // animate this view all the way back to the live-activity cover.
                     artworkContent
-                        .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+                        .clipShape(artworkShape)
                         .matchedGeometryEffect(id: "albumArt", in: namespace, isSource: isExpanded)
                         .frame(width: side, height: side)
                         // Use the same blur curve in both directions: opening resolves
@@ -214,6 +225,8 @@ struct MediaWidget: View {
     }
 
     var body: some View {
+        let title = mediaService.currentTrack?.displayTitle ?? "Nothing Playing"
+
         HStack(alignment: .center, spacing: 14) {
             // Album art — reacts to track changes via cachedArtwork and id(title)
             // NOT morph-revealed: the artwork is the matchedGeometryEffect hero element
@@ -228,11 +241,15 @@ struct MediaWidget: View {
                 Spacer(minLength: 0)
 
                 // Title
-                Text(mediaService.currentTrack?.displayTitle ?? "Nothing Playing")
-                    .font(.system(size: 14, weight: .bold))
-                    .foregroundStyle(.white)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
+                GeometryReader { proxy in
+                    ScrollingTrackLabel(
+                        content: Text(title).foregroundStyle(.white),
+                        accessibilityLabel: title,
+                        width: proxy.size.width,
+                        font: .system(size: 14, weight: .bold)
+                    )
+                }
+                .frame(height: 18)
 
                 // Artist
                 Text(mediaService.currentTrack?.displayArtist ?? "Open a media app")
@@ -354,10 +371,6 @@ struct MirrorButton: View {
             ZStack {
                 RoundedRectangle(cornerRadius: compact ? 10 : 27, style: .continuous)
                     .fill(Color.white.opacity(isHovered ? 0.14 : 0.08))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: compact ? 10 : 27, style: .continuous)
-                            .stroke(Color.white.opacity(isHovered ? 0.22 : 0.10), lineWidth: 0.75)
-                    )
                     .frame(width: compact ? 36 : 54, height: compact ? 30 : 54)
 
                 Image(systemName: "web.camera")
@@ -449,7 +462,8 @@ struct CalendarWidget: View {
     var body: some View {
         let selectedEvents = calendarService.events(for: selectedDate)
 
-        VStack(alignment: .leading, spacing: 6) {
+        GeometryReader { geometry in
+            VStack(alignment: .leading, spacing: 0) {
             // 1. Header: Month title + Today shortcut
             HStack(alignment: .center) {
                 Text(monthAndYear)
@@ -484,8 +498,13 @@ struct CalendarWidget: View {
             }
             .padding(.horizontal, 2)
 
+            Spacer(minLength: 6)
+
             // 2. 7-Day Apple Glass Week Strip
-            HStack(spacing: 3) {
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.fixed(28), spacing: 3), count: 7),
+                spacing: 0
+            ) {
                 ForEach(displayDays) { item in
                     DayCell(item: item) {
                         withAnimation(LazyNotchMotion.interactiveSpring) {
@@ -494,7 +513,9 @@ struct CalendarWidget: View {
                     }
                 }
             }
-            .frame(maxWidth: .infinity)
+            .frame(width: 7 * 28 + 6 * 3)
+
+            Spacer(minLength: 6)
 
             // 3. Schedule Glance Card
             Group {
@@ -591,7 +612,19 @@ struct CalendarWidget: View {
                 }
             }
         }
-        .frame(maxWidth: .infinity, alignment: .leading)
+            .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
+            .clipShape(
+                UnevenRoundedRectangle(
+                    cornerRadii: RectangleCornerRadii(
+                        topLeading: 0,
+                        bottomLeading: 0,
+                        bottomTrailing: MorphingNotchIsland.expandedCurveRadius(for: geometry.size.height),
+                        topTrailing: 0
+                    ),
+                    style: .continuous
+                )
+            )
+        }
     }
 }
 
