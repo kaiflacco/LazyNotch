@@ -6,6 +6,19 @@
     <string>com.lazynotch.app</string>
     <key>CFBundleName</key>
     <string>LazyNotch</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.lazynotch.shelf-items</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeDescription</key>
+            <string>Lazy Shelf Items</string>
+        </dict>
+    </array>
     <key>NSCalendarsUsageDescription</key>
     <string>LazyNotch needs calendar access to show your upcoming events in the notch.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>

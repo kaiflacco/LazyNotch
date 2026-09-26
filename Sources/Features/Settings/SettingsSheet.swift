@@ -12,6 +12,7 @@ public struct SettingsSheet: View {
     @AppStorage("showCodexUsage") private var showCodexUsage: Bool = true
     @AppStorage("hoverGraceDuration") private var hoverGraceDuration: Double = 0.15
     @State private var launchAtLogin: Bool = (SMAppService.mainApp.status == .enabled)
+    @State private var launchAtLoginError: String?
     @State private var selectedTab: SettingsTab = .general
 
     public init(isPresented: Binding<Bool>) {
@@ -142,13 +143,53 @@ public struct SettingsSheet: View {
                 .stroke(Color.white.opacity(0.14), lineWidth: 1)
         )
         .shadow(color: .black.opacity(0.6), radius: 24, y: 12)
+        .onAppear {
+            refreshLaunchAtLoginStatus()
+        }
+    }
+
+    private var launchAtLoginBinding: Binding<Bool> {
+        Binding(
+            get: { launchAtLogin },
+            set: { requestedValue in
+                let previousValue = launchAtLogin
+                launchAtLogin = requestedValue
+
+                do {
+                    if requestedValue {
+                        try SMAppService.mainApp.register()
+                    } else {
+                        try SMAppService.mainApp.unregister()
+                    }
+
+                    let isEnabled = SMAppService.mainApp.status == .enabled
+                    guard isEnabled == requestedValue else {
+                        launchAtLogin = previousValue
+                        launchAtLoginError = requestedValue
+                            ? "macOS did not enable Launch at Login. Check Login Items in System Settings."
+                            : "macOS did not disable Launch at Login. Check Login Items in System Settings."
+                        return
+                    }
+
+                    launchAtLoginError = nil
+                } catch {
+                    launchAtLogin = previousValue
+                    launchAtLoginError = "Couldn’t update Launch at Login. \(error.localizedDescription)"
+                }
+            }
+        )
+    }
+
+    private func refreshLaunchAtLoginStatus() {
+        launchAtLogin = SMAppService.mainApp.status == .enabled
+        launchAtLoginError = nil
     }
 
     // MARK: - Sections
 
     private var generalSettingsSection: some View {
         VStack(alignment: .leading, spacing: 14) {
-            Toggle(isOn: $launchAtLogin) {
+            Toggle(isOn: launchAtLoginBinding) {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("Launch at Login")
                         .font(.system(size: 13, weight: .semibold))
@@ -160,16 +201,11 @@ public struct SettingsSheet: View {
                 }
             }
             .toggleStyle(SwitchToggleStyle(tint: .lnAccentBlue))
-            .onChange(of: launchAtLogin) { _, newValue in
-                do {
-                    if newValue {
-                        try SMAppService.mainApp.register()
-                    } else {
-                        try SMAppService.mainApp.unregister()
-                    }
-                } catch {
-                    print("Failed to toggle launch at login: \(error)")
-                }
+            if let launchAtLoginError {
+                Label(launchAtLoginError, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 10.5, weight: .medium))
+                    .foregroundStyle(Color.red.opacity(0.9))
+                    .fixedSize(horizontal: false, vertical: true)
             }
 
             Divider().background(Color.white.opacity(0.06))

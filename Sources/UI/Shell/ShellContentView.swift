@@ -125,6 +125,7 @@ struct ShellContentView: View {
         ZStack(alignment: .top) {
             MorphingNotchIsland(viewModel: viewModel)
         }
+        .environmentObject(viewModel)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
@@ -462,8 +463,12 @@ struct CompactNotchContent: View {
     }
 
     var body: some View {
-        if viewModel.showsCodexLiveActivity, let usage = viewModel.codexUsage {
-            CodexUsageCompactContent(usage: usage, viewModel: viewModel)
+        if viewModel.showsCodexLiveActivity {
+            if let usage = viewModel.codexUsage {
+                CodexUsageCompactContent(usage: usage, viewModel: viewModel)
+            } else {
+                CodexUnavailableCompactContent(viewModel: viewModel)
+            }
         } else if viewModel.isActivityContentVisible {
             let topRadius = MorphingNotchIsland.liveActivityTopRadius
             let borderMargin = MorphingNotchIsland.liveActivityBorderMargin
@@ -807,6 +812,40 @@ private struct CodexUsageCompactContent: View {
     }
 }
 
+private struct CodexUnavailableCompactContent: View {
+    @ObservedObject var viewModel: ShellViewModel
+
+    var body: some View {
+        Button {
+            withAnimation(LazyNotchMotion.shellSpring(isExpanded: true)) {
+                viewModel.openHome()
+            }
+        } label: {
+            HStack(spacing: 7) {
+                Image(systemName: "sparkles")
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(accentColor)
+                Text(viewModel.codexHostName ?? "Codex")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.white.opacity(0.82))
+                Text(viewModel.codexUsageState.displayLabel)
+                    .font(.system(size: 9.5, weight: .medium))
+                    .foregroundStyle(.white.opacity(0.42))
+            }
+            .frame(height: viewModel.compactSize.height)
+            .padding(.horizontal, 13)
+            .contentShape(Capsule())
+        }
+        .buttonStyle(NotchStripPressStyle())
+        .accessibilityLabel("Codex usage \(viewModel.codexUsageState.displayLabel.lowercased())")
+        .help("Codex is active; usage is \(viewModel.codexUsageState.displayLabel.lowercased())")
+    }
+
+    private var accentColor: Color {
+        Color(nsColor: viewModel.codexAccentColor)
+    }
+}
+
 // MARK: - Expanded Content
 
 struct ExpandedNotchContent: View {
@@ -840,7 +879,7 @@ struct ExpandedNotchContent: View {
                 }
             }
             .padding(.horizontal, contentInset)
-            .padding(.top, 52)
+            .padding(.top, selectedTab == .shelf ? 40 : 52)
             .padding(.bottom, 16)
 
             TopBar(
@@ -983,16 +1022,21 @@ struct TopBar: View {
                 } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 14, weight: .semibold))
-                        .foregroundStyle(gearHovered ? Color.white : Color.white.opacity(0.7))
-                        .frame(width: 26, height: 26)
+                        .foregroundStyle(gearHovered ? Color.white : Color.lnTextSecondary)
+                        .frame(width: 32, height: 32)
                         .background(
-                            RoundedRectangle(cornerRadius: 9, style: .continuous)
-                                .fill(gearHovered ? Color.white.opacity(0.14) : Color.white.opacity(0.06))
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(gearHovered ? Color.lnSurfaceElevated : Color.lnSurface)
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.lnBorder, lineWidth: 0.5)
+                                )
                         )
                         .scaleEffect(gearHovered ? 1.06 : 1.0)
                 }
                 .buttonStyle(.plain)
                 .help("Open Settings")
+                .accessibilityLabel("Open Settings")
                 .onHover { hovering in
                     withAnimation(LazyNotchMotion.interactiveSpring) {
                         gearHovered = hovering
@@ -1005,7 +1049,7 @@ struct TopBar: View {
     private var tabStrip: some View {
         HStack(spacing: 4) {
             ForEach(ShellContentView.ShellTab.allCases, id: \.self) { tab in
-                let isSelected = selectedTab == tab
+                let isSelected = selectedTab == tab && !(tab == .home && showsCodexDetails)
                 Button {
                     withAnimation(LazyNotchMotion.tabSpring) {
                         showsCodexDetails = false
@@ -1018,13 +1062,14 @@ struct TopBar: View {
                         Text(tab.rawValue)
                             .font(.system(size: 12, weight: .semibold))
                     }
-                    .foregroundStyle(isSelected ? Color.white : Color.white.opacity(0.55))
+                    .foregroundStyle(isSelected ? Color.lnTextPrimary : Color.lnTextSecondary)
                     .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    .padding(.vertical, 7)
                     .background {
                         if isSelected {
                             Capsule()
-                                .fill(Color.white.opacity(0.16))
+                                .fill(Color.lnSurfaceElevated)
+                                .overlay(Capsule().stroke(Color.lnBorder, lineWidth: 0.5))
                                 .matchedGeometryEffect(id: "activeTab", in: tabNamespace)
                         }
                     }
@@ -1032,6 +1077,8 @@ struct TopBar: View {
                 }
                 .buttonStyle(.plain)
                 .help(tab.helpText)
+                .accessibilityLabel(tab.rawValue)
+                .accessibilityValue(isSelected ? "Selected" : "")
             }
         }
         .padding(3)
@@ -1056,7 +1103,7 @@ struct TopBar: View {
                         Image(systemName: "sparkles")
                             .font(.system(size: 11, weight: .semibold))
                     }
-                    Text("\(usage.primary.remainingPercent)%")
+                    Text("\(usage.primary.remainingPercent)% left")
                         .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .monospacedDigit()
                 }
@@ -1072,6 +1119,28 @@ struct TopBar: View {
             .help(showsCodexDetails ? "Show the main widget" : "Show Codex usage")
             .accessibilityLabel("Codex usage")
             .accessibilityValue("\(usage.primary.remainingPercent) percent remaining")
+        } else if let hostName = viewModel.codexHostName {
+            Button {
+                withAnimation(LazyNotchMotion.tabSpring) {
+                    viewModel.openHome()
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "sparkles")
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(hostName)
+                        .font(.system(size: 11, weight: .semibold))
+                    Text(viewModel.codexUsageState.displayLabel)
+                        .font(.system(size: 9.5, weight: .medium))
+                }
+                .foregroundStyle(accentColor)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 5)
+                .background(Capsule().fill(accentColor.opacity(0.1)))
+            }
+            .buttonStyle(.plain)
+            .help("Codex usage is \(viewModel.codexUsageState.displayLabel.lowercased())")
+            .accessibilityLabel("Codex usage \(viewModel.codexUsageState.displayLabel.lowercased())")
         }
     }
 

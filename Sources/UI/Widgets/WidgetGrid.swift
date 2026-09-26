@@ -14,21 +14,21 @@ struct HomeRow: View {
     }
 
     var body: some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 18) {
             // Left: Full media player
             MediaWidget(namespace: namespace, progress: progress, isExpanded: isExpanded)
                 .frame(maxWidth: .infinity)
 
             // Hairline divider
             Rectangle()
-                .fill(Color.white.opacity(0.08))
+                .fill(Color.lnBorder)
                 .frame(width: 0.5)
                 .padding(.vertical, 14)
                 .morphReveal(progress)
 
             // Right: Calendar
             CalendarWidget()
-                .frame(width: 216)
+                .frame(width: 228)
                 .frame(maxHeight: .infinity)
                 .morphReveal(progress)
         }
@@ -144,6 +144,8 @@ struct VinylArtwork: View {
         .onHover { hovering in
             isHovered = hovering
         }
+        .accessibilityLabel("Open \(track?.appName ?? "media app")")
+        .accessibilityHint("Opens the app playing this track")
     }
 
     @ViewBuilder
@@ -254,7 +256,7 @@ struct MediaWidget: View {
                 // Artist
                 Text(mediaService.currentTrack?.displayArtist ?? "Open a media app")
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(Color.white.opacity(0.55))
+                    .foregroundStyle(Color.lnTextSecondary)
                     .lineLimit(1)
                     .padding(.top, 3)
 
@@ -268,39 +270,47 @@ struct MediaWidget: View {
                         GeometryReader { geo in
                             ZStack(alignment: .leading) {
                                 Capsule()
-                                    .fill(Color.white.opacity(0.15))
-                                    .frame(height: 3)
+                                    .fill(Color.white.opacity(0.18))
+                                    .frame(height: 4)
                                 Capsule()
-                                    .fill(Color.white.opacity(0.85))
-                                    .frame(width: geo.size.width * progress, height: 3)
+                                    .fill(appColor)
+                                    .frame(width: geo.size.width * progress, height: 4)
                             }
                         }
-                        .frame(height: 3)
+                        .frame(height: 4)
 
                         // Time labels
                         HStack {
                             Text(formatTime(track.elapsedTime))
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color.white.opacity(0.45))
+                                .foregroundStyle(Color.lnTextSecondary)
                             Spacer()
                             Text(formatTime(track.duration))
                                 .font(.system(size: 10, weight: .medium, design: .monospaced))
-                                .foregroundStyle(Color.white.opacity(0.35))
+                                .foregroundStyle(Color.lnTextTertiary)
                         }
                     }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Playback progress")
+                    .accessibilityValue("\(formatTime(track.elapsedTime)) of \(formatTime(track.duration))")
                 }
 
                 Spacer(minLength: 8)
 
                 // Controls row
                 HStack(spacing: 0) {
-                    MediaControlButton(systemName: "backward.fill", size: 13) {
+                    MediaControlButton(systemName: "backward.fill", label: "Previous track", size: 14) {
                         mediaService.previousTrack()
                     }
-                    MediaControlButton(systemName: isPlaying ? "pause.fill" : "play.fill", size: 18, isProminent: true) {
+                    MediaControlButton(
+                        systemName: isPlaying ? "pause.fill" : "play.fill",
+                        label: isPlaying ? "Pause" : "Play",
+                        size: 18,
+                        isProminent: true
+                    ) {
                         mediaService.togglePlayPause()
                     }
-                    MediaControlButton(systemName: "forward.fill", size: 13) {
+                    MediaControlButton(systemName: "forward.fill", label: "Next track", size: 14) {
                         mediaService.nextTrack()
                     }
                 }
@@ -324,6 +334,7 @@ struct MediaWidget: View {
 
 struct MediaControlButton: View {
     let systemName: String
+    let label: String
     let size: CGFloat
     var isProminent: Bool = false
     let action: () -> Void
@@ -336,7 +347,7 @@ struct MediaControlButton: View {
             Image(systemName: systemName)
                 .font(.system(size: size, weight: isProminent ? .bold : .semibold))
                 .foregroundStyle(.white.opacity(isHovered ? 1.0 : 0.80))
-                .frame(width: isProminent ? 36 : 30, height: isProminent ? 36 : 30)
+                .frame(width: isProminent ? 42 : 36, height: isProminent ? 42 : 36)
                 .background(
                     Circle()
                         .fill(isProminent
@@ -354,6 +365,8 @@ struct MediaControlButton: View {
         .onHover { hovering in
             withAnimation(LazyNotchMotion.interactiveSpring) { isHovered = hovering }
         }
+        .accessibilityLabel(label)
+        .help(label)
     }
 }
 
@@ -371,7 +384,7 @@ struct MirrorButton: View {
             ZStack {
                 RoundedRectangle(cornerRadius: compact ? 10 : 27, style: .continuous)
                     .fill(Color.white.opacity(isHovered ? 0.14 : 0.08))
-                    .frame(width: compact ? 36 : 54, height: compact ? 30 : 54)
+                    .frame(width: compact ? 32 : 54, height: compact ? 32 : 54)
 
                 Image(systemName: "web.camera")
                     .font(.system(size: compact ? 14 : 20, weight: .medium))
@@ -383,6 +396,8 @@ struct MirrorButton: View {
         .onHover { hovering in
             withAnimation(LazyNotchMotion.interactiveSpring) { isHovered = hovering }
         }
+        .accessibilityLabel("Open Hand Mirror")
+        .help("Open Hand Mirror")
     }
 }
 
@@ -394,13 +409,14 @@ struct CalendarWidget: View {
     @State private var selectedDate: Date = Calendar.current.startOfDay(for: Date.now)
 
     struct DayItem: Identifiable {
-        let id = UUID()
         let date: Date
         let weekday: String
         let dayNumber: String
         let isToday: Bool
         let isSelected: Bool
         let hasEvents: Bool
+
+        var id: Date { date }
     }
 
     private var displayDays: [DayItem] {
@@ -416,7 +432,10 @@ struct CalendarWidget: View {
             let isSelected = (dayStart == selectedDayStart)
             let weekday = weekdayLetter(date)
             let dayKey = CalendarService.dayKey(for: date)
-            let hasEvents = !(calendarService.weekEvents[dayKey]?.isEmpty ?? true)
+            let hasEvents = CalendarService.hasEventIndicator(
+                hasPermission: calendarService.hasPermission,
+                events: calendarService.weekEvents[dayKey]
+            )
 
             return DayItem(
                 date: date,
@@ -447,8 +466,18 @@ struct CalendarWidget: View {
         return formatter
     }()
 
+    private static let shortDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "MMM d"
+        return formatter
+    }()
+
     private var monthAndYear: String {
         Self.monthFormatter.string(from: selectedDate)
+    }
+
+    private var selectedDateSummary: String {
+        "\(weekdayLong(selectedDate)), \(Self.shortDateFormatter.string(from: selectedDate))"
     }
 
     private func weekdayLetter(_ date: Date) -> String {
@@ -464,11 +493,17 @@ struct CalendarWidget: View {
 
         GeometryReader { geometry in
             VStack(alignment: .leading, spacing: 0) {
-            // 1. Header: Month title + Today shortcut
+            // 1. Header: Month title + explicit selected-date context
             HStack(alignment: .center) {
-                Text(monthAndYear)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.white.opacity(0.92))
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(monthAndYear)
+                        .font(.system(size: 15, weight: .bold))
+                        .foregroundStyle(Color.lnTextPrimary)
+
+                    Text(selectedDateSummary)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Color.lnTextSecondary)
+                }
 
                 Spacer()
 
@@ -484,16 +519,16 @@ struct CalendarWidget: View {
                             Text("Today")
                                 .font(.system(size: 11, weight: .medium))
                         }
-                        .foregroundStyle(Color.white.opacity(0.85))
+                        .foregroundStyle(Color.lnTextPrimary)
                         .padding(.horizontal, 7)
                         .padding(.vertical, 2.5)
-                        .background(Capsule().fill(Color.white.opacity(0.12)))
+                        .background(Capsule().fill(Color.lnAccentBlue.opacity(0.22)))
                     }
                     .buttonStyle(.plain)
                 } else {
-                    Text(weekdayLong(Date.now))
+                    Text("Today")
                         .font(.system(size: 11, weight: .medium))
-                        .foregroundStyle(Color.white.opacity(0.42))
+                        .foregroundStyle(Color.lnAccentBlue)
                 }
             }
             .padding(.horizontal, 2)
@@ -530,7 +565,7 @@ struct CalendarWidget: View {
 
                             Text("Connect Calendar Access")
                                 .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(Color.white.opacity(0.90))
+                            .foregroundStyle(Color.lnTextPrimary)
 
                             Spacer()
 
@@ -541,10 +576,26 @@ struct CalendarWidget: View {
                         .padding(.horizontal, 9)
                         .padding(.vertical, 5.5)
                         .background(
-                            RoundedRectangle(cornerRadius: 14, style: .continuous)
+                            UnevenRoundedRectangle(
+                                cornerRadii: .init(
+                                    topLeading: 14,
+                                    bottomLeading: 14,
+                                    bottomTrailing: 20,
+                                    topTrailing: 14
+                                ),
+                                style: .continuous
+                            )
                                 .fill(Color.white.opacity(0.045))
                                 .overlay(
-                                    RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                    UnevenRoundedRectangle(
+                                        cornerRadii: .init(
+                                            topLeading: 14,
+                                            bottomLeading: 14,
+                                            bottomTrailing: 20,
+                                            topTrailing: 14
+                                        ),
+                                        style: .continuous
+                                    )
                                         .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                                 )
                         )
@@ -558,14 +609,20 @@ struct CalendarWidget: View {
 
                         Text(first.title)
                             .font(.system(size: 11.5, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.92))
+                            .foregroundStyle(Color.lnTextPrimary)
                             .lineLimit(1)
 
                         Spacer(minLength: 4)
 
                         Text(first.formattedTime)
                             .font(.system(size: 10.5, weight: .medium, design: .rounded))
-                            .foregroundStyle(Color.white.opacity(0.55))
+                            .foregroundStyle(Color.lnTextSecondary)
+
+                        if calendarService.isLoading {
+                            ProgressView()
+                                .controlSize(.mini)
+                                .tint(Color.lnTextSecondary)
+                        }
 
                         if selectedEvents.count > 1 {
                             Text("+\(selectedEvents.count - 1)")
@@ -579,22 +636,53 @@ struct CalendarWidget: View {
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5.5)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
+                        UnevenRoundedRectangle(
+                            cornerRadii: .init(
+                                topLeading: 14,
+                                bottomLeading: 14,
+                                bottomTrailing: 20,
+                                topTrailing: 14
+                            ),
+                            style: .continuous
+                        )
                             .fill(Color.white.opacity(0.05))
                             .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
+                                UnevenRoundedRectangle(
+                                    cornerRadii: .init(
+                                        topLeading: 14,
+                                        bottomLeading: 14,
+                                        bottomTrailing: 20,
+                                        topTrailing: 14
+                                    ),
+                                    style: .continuous
+                                )
                                     .stroke(Color.white.opacity(0.08), lineWidth: 0.5)
                             )
                     )
+                } else if calendarService.isLoading {
+                    HStack(spacing: 6) {
+                        ProgressView()
+                            .controlSize(.small)
+                            .tint(Color.lnTextSecondary)
+
+                        Text("Loading events…")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(Color.lnTextSecondary)
+                            .lineLimit(1)
+
+                        Spacer()
+                    }
+                    .padding(.horizontal, 9)
+                    .padding(.vertical, 5.5)
                 } else {
                     HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle")
+                        Image(systemName: "calendar")
                             .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.35))
+                            .foregroundStyle(Color.lnTextSecondary)
 
                         Text(calendar.isDateInToday(selectedDate) ? "No events scheduled today" : "No events scheduled")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(Color.white.opacity(0.50))
+                            .foregroundStyle(Color.lnTextSecondary)
                             .lineLimit(1)
 
                         Spacer()
@@ -602,28 +690,34 @@ struct CalendarWidget: View {
                     .padding(.horizontal, 9)
                     .padding(.vertical, 5.5)
                     .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(Color.white.opacity(0.035))
+                        UnevenRoundedRectangle(
+                            cornerRadii: .init(
+                                topLeading: 14,
+                                bottomLeading: 14,
+                                bottomTrailing: 20,
+                                topTrailing: 14
+                            ),
+                            style: .continuous
+                        )
+                            .fill(Color.lnSurface)
                             .overlay(
-                                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                                    .stroke(Color.white.opacity(0.06), lineWidth: 0.5)
+                                UnevenRoundedRectangle(
+                                    cornerRadii: .init(
+                                        topLeading: 14,
+                                        bottomLeading: 14,
+                                        bottomTrailing: 20,
+                                        topTrailing: 14
+                                    ),
+                                    style: .continuous
+                                )
+                                    .stroke(Color.lnBorder, lineWidth: 0.5)
                             )
                     )
                 }
             }
+            .padding(.bottom, 6)
         }
             .frame(width: geometry.size.width, height: geometry.size.height, alignment: .topLeading)
-            .clipShape(
-                UnevenRoundedRectangle(
-                    cornerRadii: RectangleCornerRadii(
-                        topLeading: 0,
-                        bottomLeading: 0,
-                        bottomTrailing: MorphingNotchIsland.expandedCurveRadius(for: geometry.size.height),
-                        topTrailing: 0
-                    ),
-                    style: .continuous
-                )
-            )
         }
     }
 }
@@ -643,8 +737,8 @@ private struct DayCell: View {
                     .font(.system(size: 9.5, weight: item.isSelected || item.isToday ? .bold : .medium))
                     .foregroundStyle(
                         item.isSelected
-                            ? Color.white
-                            : (item.isToday ? Color(red: 0.35, green: 0.65, blue: 1.0) : Color.white.opacity(0.40))
+                            ? Color.lnTextPrimary
+                            : (item.isToday ? Color.lnAccentBlue : Color.lnTextTertiary)
                     )
 
                 // Day number (e.g. "20")
@@ -653,8 +747,8 @@ private struct DayCell: View {
                     .monospacedDigit()
                     .foregroundStyle(
                         item.isSelected
-                            ? Color.white
-                            : (item.isToday ? Color.white : Color.white.opacity(0.80))
+                            ? Color.lnTextPrimary
+                            : (item.isToday ? Color.lnTextPrimary : Color.lnTextSecondary)
                     )
 
                 // Event dot
@@ -668,10 +762,10 @@ private struct DayCell: View {
             .background {
                 if item.isSelected {
                     RoundedRectangle(cornerRadius: 12, style: .continuous)
-                        .fill(Color.white.opacity(0.20))
+                        .fill(Color.lnAccentBlue.opacity(0.30))
                         .overlay(
                             RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                .stroke(Color.white.opacity(0.30), lineWidth: 0.75)
+                                .stroke(Color.lnAccentBlue.opacity(0.75), lineWidth: 0.75)
                         )
                         .shadow(color: Color.black.opacity(0.25), radius: 3, y: 1.5)
                 } else if item.isToday {
@@ -692,5 +786,15 @@ private struct DayCell: View {
         .onHover { h in
             isHovered = h
         }
+        .accessibilityLabel("\(item.weekday) \(item.dayNumber)")
+        .accessibilityValue(
+            [
+                item.isToday ? "Today" : nil,
+                item.isSelected ? "Selected" : nil,
+                item.hasEvents ? "Events scheduled" : "No events"
+            ]
+            .compactMap { $0 }
+            .joined(separator: ", ")
+        )
     }
 }

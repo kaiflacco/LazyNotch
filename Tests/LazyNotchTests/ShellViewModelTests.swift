@@ -1,4 +1,5 @@
 import AppKit
+import UniformTypeIdentifiers
 import XCTest
 @testable import LazyNotch
 
@@ -85,6 +86,18 @@ final class ShellViewModelTests: XCTestCase {
         XCTAssertEqual(grouped[CalendarService.dayKey(for: day)]?.map(\.title), ["Earlier", "Later"])
     }
 
+    func testCalendarEventIndicatorRequiresCurrentPermission() {
+        let event = UpcomingCalendarEvent(
+            title: "Planning",
+            startDate: Date(),
+            endDate: Date().addingTimeInterval(3600),
+            isAllDay: false
+        )
+
+        XCTAssertTrue(CalendarService.hasEventIndicator(hasPermission: true, events: [event]))
+        XCTAssertFalse(CalendarService.hasEventIndicator(hasPermission: false, events: [event]))
+    }
+
     func testShelfPersistenceDropsMissingPaths() throws {
         let fileManager = FileManager.default
         let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
@@ -152,6 +165,81 @@ final class ShellViewModelTests: XCTestCase {
         XCTAssertEqual(sentURLs, [urls[1], urls[2], urls[0]])
     }
 
+    func testShelfSingleSelectionReplacesSelectionAndAirDropsSelectedItems() throws {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: directory) }
+
+        let urls = ["one.txt", "two.txt"].map { directory.appendingPathComponent($0) }
+        for url in urls {
+            try Data(url.lastPathComponent.utf8).write(to: url)
+        }
+
+        let suiteName = "LazyShelfSelectionTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        var sentURLs: [URL] = []
+        let store = LazyShelfStore(defaults: defaults) { urls in
+            sentURLs = urls
+            return true
+        }
+
+        store.add(urls: urls)
+        store.selectOnly(store.items[0])
+        XCTAssertEqual(store.selectedItemIDs, [store.items[0].id])
+
+        store.selectOnly(store.items[1])
+        XCTAssertEqual(store.selectedItemIDs, [store.items[1].id])
+        XCTAssertTrue(store.sendSelectedItemsViaAirDrop())
+        XCTAssertEqual(sentURLs, [urls[1]])
+    }
+
+    func testShelfAirDropReportsShareSheetOpenedWithoutClaimingDelivery() async throws {
+        let suiteName = "LazyShelfAirDropStatusTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+
+        let store = LazyShelfStore(defaults: defaults) { _ in true }
+        let url = URL(fileURLWithPath: "/tmp/example.txt")
+
+        XCTAssertTrue(store.sendViaAirDrop([url]))
+        XCTAssertEqual(store.airDropState, .opening)
+
+        try await Task.sleep(for: .milliseconds(400))
+
+        XCTAssertEqual(store.airDropState, .opened)
+    }
+
+    func testShelfDraggingOverItemsMovesInTheDragDirection() throws {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: directory) }
+
+        let urls = ["one.txt", "two.txt", "three.txt"].map { directory.appendingPathComponent($0) }
+        for url in urls {
+            try Data(url.lastPathComponent.utf8).write(to: url)
+        }
+
+        let suiteName = "LazyShelfReorderTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LazyShelfStore(defaults: defaults) { _ in true }
+
+        store.add(urls: urls)
+        store.beginDragging(store.items[0])
+        store.moveDraggedItems(over: store.items[1].id)
+
+        XCTAssertEqual(store.items.map(\.url), [urls[1], urls[0], urls[2]])
+
+        store.endDragging()
+        store.beginDragging(store.items[2])
+        store.moveDraggedItems(over: store.items[0].id)
+
+        XCTAssertEqual(store.items.map(\.url), [urls[2], urls[1], urls[0]])
+    }
+
     func testCodexUsageWindowClampsRemainingPercent() {
         let window = CodexUsageService.parseWindow([
             "usedPercent": 125,
@@ -162,6 +250,11 @@ final class ShellViewModelTests: XCTestCase {
         XCTAssertEqual(window?.remainingPercent, 0)
         XCTAssertEqual(window?.durationMinutes, 300)
         XCTAssertEqual(window?.resetsAt, Date(timeIntervalSince1970: 1_700_000_000))
+    }
+
+    func testCodexUsageStateUsesUnavailableWhenUsageCannotBeRead() {
+        XCTAssertEqual(CodexUsageState.loading.displayLabel, "Loading")
+        XCTAssertEqual(CodexUsageState.unavailable.displayLabel, "Unavailable")
     }
 
     func testCollapsedLiveActivityHitRegionReachesHostingView() {
@@ -177,10 +270,134 @@ final class ShellViewModelTests: XCTestCase {
         XCTAssertTrue(hostingView.isFlipped)
         XCTAssertEqual(hostingView.bounds.size, CGSize(width: 770, height: 380))
         XCTAssertTrue(viewModel.isActivityContentVisible)
-        let physicalClickPoint = NSPoint(
+        let bottomOriginClickPoint = NSPoint(
             x: hostingView.bounds.midX,
             y: hostingView.bounds.maxY - 16
         )
-        XCTAssertNotNil(hostingView.hitTest(physicalClickPoint))
+        XCTAssertNotNil(hostingView.hitTest(bottomOriginClickPoint))
+    }
+
+    func testExpandedShelfHitRegionUsesHostingViewCoordinates() {
+        let viewModel = ShellViewModel()
+        viewModel.openShelf()
+
+        let hostingView = ShellHostingView(rootView: ShellContentView(viewModel: viewModel))
+        hostingView.viewModel = viewModel
+        hostingView.frame = NSRect(x: 0, y: 0, width: 770, height: 380)
+        hostingView.layoutSubtreeIfNeeded()
+
+        let bottomOriginShelfPoint = NSPoint(
+            x: hostingView.bounds.midX,
+            y: hostingView.bounds.maxY - 100
+        )
+
+        XCTAssertNotNil(hostingView.hitTest(bottomOriginShelfPoint))
+    }
+
+    func testShellHostingViewDoesNotClaimInternalShelfDrags() {
+        let internalTypes: [NSPasteboard.PasteboardType] = [
+            .init("com.lazynotch.shelf-items"),
+            .fileURL
+        ]
+        let hostingView = ShellHostingView(rootView: ShellContentView(viewModel: ShellViewModel()))
+
+        XCTAssertTrue(ShellHostingView.isInternalShelfDrag(internalTypes))
+        XCTAssertFalse(ShellHostingView.isInternalShelfDrag([NSPasteboard.PasteboardType.fileURL]))
+        XCTAssertTrue(ShellHostingView.isExternalFileDrag([.fileURL]))
+        XCTAssertFalse(ShellHostingView.isExternalFileDrag(internalTypes))
+        XCTAssertTrue(ShellHostingView.isInternalShelfDrag([.fileURL], sourceIsInsideShell: true))
+        XCTAssertFalse(ShellHostingView.isExternalFileDrag([.fileURL], sourceIsInsideShell: true))
+        XCTAssertTrue(ShellHostingView.isInternalShelfDrag([.fileURL], hasActiveShelfDrag: true))
+        XCTAssertFalse(ShellHostingView.isExternalFileDrag([.fileURL], hasActiveShelfDrag: true))
+        XCTAssertTrue(hostingView.registeredDraggedTypes.contains(.init(LazyShelfDrag.type.identifier)))
+        XCTAssertTrue(hostingView.registeredDraggedTypes.contains(.fileURL))
+    }
+
+    func testExpandedShellDefersShelfDropsToSwiftUI() {
+        XCTAssertTrue(ShellHostingView.shouldDeferDropToSwiftUI(isExpanded: true))
+        XCTAssertFalse(ShellHostingView.shouldDeferDropToSwiftUI(isExpanded: false))
+    }
+
+    func testShelfDragPasteboardCarriesSelectedItemsAndFileURL() throws {
+        let fileManager = FileManager.default
+        let directory = fileManager.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: directory) }
+
+        let urls = ["one.txt", "two.txt"].map { directory.appendingPathComponent($0) }
+        for url in urls {
+            try Data(url.lastPathComponent.utf8).write(to: url)
+        }
+
+        let suiteName = "LazyShelfDragPayloadTests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        let store = LazyShelfStore(defaults: defaults) { _ in true }
+        store.add(urls: urls)
+        store.selectAll()
+
+        let item = store.items[0]
+        store.beginDragging(item)
+        let pasteboardItem = LazyShelfDrag.pasteboardItem(
+            for: item.url,
+            itemIDs: store.draggedItemIDs
+        )
+
+        XCTAssertEqual(store.draggedItemIDs, store.items.map(\.id))
+        XCTAssertTrue(pasteboardItem.types.contains(.fileURL))
+        XCTAssertTrue(pasteboardItem.types.contains(.string))
+        XCTAssertTrue(
+            pasteboardItem.types.contains(
+                NSPasteboard.PasteboardType(LazyShelfDrag.type.identifier)
+            )
+        )
+        XCTAssertEqual(
+            pasteboardItem.string(
+                forType: NSPasteboard.PasteboardType(LazyShelfDrag.type.identifier)
+            ),
+            store.draggedItemIDs.map(\.uuidString).joined(separator: "\n")
+        )
+
+        let provider = LazyShelfDrag.provider(for: item, itemIDs: store.draggedItemIDs)
+        XCTAssertTrue(provider.registeredTypeIdentifiers.contains(UTType.fileURL.identifier))
+        XCTAssertTrue(provider.registeredTypeIdentifiers.contains(LazyShelfDrag.type.identifier))
+    }
+
+    func testShelfPayloadIsNeverAcceptedAsAnExternalFileDrop() {
+        XCTAssertFalse(
+            LazyShelfDrag.acceptsExternalDrop(
+                types: [UTType.fileURL, LazyShelfDrag.type],
+                hasActiveShelfDrag: true
+            )
+        )
+        XCTAssertFalse(
+            LazyShelfDrag.acceptsExternalDrop(
+                types: [UTType.fileURL, LazyShelfDrag.type],
+                hasActiveShelfDrag: false
+            )
+        )
+        XCTAssertTrue(
+            LazyShelfDrag.acceptsExternalDrop(
+                types: [UTType.fileURL],
+                hasActiveShelfDrag: false
+            )
+        )
+    }
+
+    func testShelfDragTypeIsDeclaredInAppInfoPlist() throws {
+        let repositoryRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let data = try Data(contentsOf: repositoryRoot.appendingPathComponent("Info.plist"))
+        let plist = try XCTUnwrap(
+            PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any]
+        )
+        let declarations = try XCTUnwrap(plist["UTExportedTypeDeclarations"] as? [[String: Any]])
+        let shelfType = try XCTUnwrap(
+            declarations.first { $0["UTTypeIdentifier"] as? String == LazyShelfDrag.type.identifier }
+        )
+
+        XCTAssertEqual(shelfType["UTTypeConformsTo"] as? [String], [UTType.data.identifier])
     }
 }

@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import CoreGraphics
 import SwiftUI
 
 private final class LazyNotchPanel: NSPanel {
@@ -13,17 +14,20 @@ final class ShellViewModel: ObservableObject {
     @Published var isHovered: Bool = false
     @Published var hasActiveLiveActivity: Bool = false
     @Published var codexUsage: CodexUsage?
+    @Published var codexUsageState: CodexUsageState = .loading
     @Published var codexIcon: NSImage?
     @Published var codexAccentColor: NSColor = .systemBlue
     @Published var codexHostName: String?
     @Published var showsCodexLiveActivity = false
     @Published var showsCodexDetails = false
     @Published var isMediaCoverHovered = false
+    @Published var isShelfDropTargeted = false
     @Published var activeTab: ShellContentView.ShellTab = .home
     @Published var compactSize: CGSize = CGSize(width: 186, height: 32)
 
     func openHome() {
         isMediaCoverHovered = false
+        isShelfDropTargeted = false
         activeTab = .home
         showsCodexDetails = false
         isExpanded = true
@@ -31,6 +35,7 @@ final class ShellViewModel: ObservableObject {
 
     func openShelf() {
         isMediaCoverHovered = false
+        isShelfDropTargeted = false
         activeTab = .shelf
         showsCodexDetails = false
         isExpanded = true
@@ -38,6 +43,7 @@ final class ShellViewModel: ObservableObject {
 
     func close() {
         isMediaCoverHovered = false
+        isShelfDropTargeted = false
         showsCodexDetails = false
         isExpanded = false
     }
@@ -83,11 +89,12 @@ final class LazyNotchWindowController {
     private var hoverTimer: Timer?
     private var enterArmedAt: Date?
     private var leaveArmedAt: Date?
-    /// While set, the island stays expanded on the Tray regardless of cursor position
+    /// While set, the island stays expanded on Lazy Shelf regardless of cursor position
     /// (used while the file picker is open / right after staging files).
     private var holdOpenUntil: Date?
     private var lastDragChangeCount: Int = NSPasteboard(name: .drag).changeCount
     private var isSystemDragInProgress: Bool = false
+    private var isPanelBelowDragImage: Bool = false
 
     private var cancellables = Set<AnyCancellable>()
     private var notificationObservers: [NSObjectProtocol] = []
@@ -116,8 +123,9 @@ final class LazyNotchWindowController {
             let isPlaying = MediaService.shared.currentTrack?.isPlaying == true
             let codexUsage = CodexUsageService.shared.usage
             let codingAppIsActive = CodexUsageService.shared.hostIsActive
-            let showCodexLiveActivity = showCodexUsage && codexUsage != nil && codingAppIsActive
-            self?.viewModel.codexUsage = showCodexUsage ? codexUsage : nil
+            let showCodexLiveActivity = showCodexUsage && codingAppIsActive
+            self?.viewModel.codexUsage = showCodexUsage && CodexUsageService.shared.usageState == .available ? codexUsage : nil
+            self?.viewModel.codexUsageState = CodexUsageService.shared.usageState
             self?.viewModel.showsCodexLiveActivity = showCodexLiveActivity
             if showCodexLiveActivity || !isPlaying {
                 self?.viewModel.isMediaCoverHovered = false
@@ -127,11 +135,7 @@ final class LazyNotchWindowController {
             }
             self?.viewModel.codexIcon = CodexUsageService.shared.codexIcon
             self?.viewModel.codexAccentColor = CodexUsageService.shared.codexAccentColor
-            if let activeHostName = CodexUsageService.shared.activeHostName {
-                self?.viewModel.codexHostName = activeHostName
-            } else if self?.viewModel.codexHostName == nil {
-                self?.viewModel.codexHostName = "Codex"
-            }
+            self?.viewModel.codexHostName = CodexUsageService.shared.activeHostName
             self?.viewModel.hasActiveLiveActivity = showCodexLiveActivity || (showLiveMedia && isPlaying && !codingAppIsActive)
         }
 
@@ -143,6 +147,13 @@ final class LazyNotchWindowController {
             .store(in: &cancellables)
 
         CodexUsageService.shared.$usage
+            .receive(on: DispatchQueue.main)
+            .sink { _ in
+                updateLiveActivity()
+            }
+            .store(in: &cancellables)
+
+        CodexUsageService.shared.$usageState
             .receive(on: DispatchQueue.main)
             .sink { _ in
                 updateLiveActivity()
@@ -231,6 +242,8 @@ final class LazyNotchWindowController {
         notificationObservers.forEach { NotificationCenter.default.removeObserver($0) }
         notificationObservers.removeAll()
         cancellables.removeAll()
+        isPanelBelowDragImage = false
+        panel.level = .screenSaver
         panel.orderOut(nil)
     }
 
@@ -262,7 +275,6 @@ final class LazyNotchWindowController {
         let host = ShellHostingView(rootView: ShellContentView(viewModel: viewModel))
         host.viewModel = viewModel
         panel.contentView = host
-        panel.registerForDraggedTypes([.fileURL])
         self.panel = panel
     }
 
@@ -401,13 +413,16 @@ final class LazyNotchWindowController {
     /// accept events only over the actually-interactive notch region, pass through everywhere
     /// else (menu bar items, pixels below the notch, etc.).
     private func updateMousePassThrough() {
+        updatePanelLevelForDrag()
         let mouse = NSEvent.mouseLocation
 
         let interactive: Bool
         if isSystemDragInProgress {
-            // A drag only interacts with an already-open Shelf. Files near the
-            // collapsed notch pass through without opening a drop surface.
-            interactive = viewModel.isExpanded && (expandedInteractiveRect()?.contains(mouse) ?? false)
+            // Let external file drags reach the collapsed notch so its drop
+            // destination can open the Shelf. Expanded drags stay inside the shell.
+            interactive = viewModel.isExpanded
+                ? (expandedInteractiveRect()?.contains(mouse) ?? false)
+                : hotZoneRect().contains(mouse)
         } else if viewModel.isExpanded {
             interactive = expandedInteractiveRect()?.contains(mouse) ?? false
         } else {
@@ -415,6 +430,24 @@ final class LazyNotchWindowController {
         }
 
         panel.ignoresMouseEvents = !interactive
+    }
+
+    /// Native drag previews are hosted at CoreGraphics' dragging-window level.
+    /// Keep the notch just below that level while a drag is active so the preview
+    /// remains visible when it crosses over the notch, then restore the notch's
+    /// always-on-top level when the drag ends.
+    private func updatePanelLevelForDrag() {
+        let dragIsActive = isSystemDragInProgress || !LazyShelfStore.shared.draggedItemIDs.isEmpty
+        guard dragIsActive != isPanelBelowDragImage else { return }
+
+        isPanelBelowDragImage = dragIsActive
+        if dragIsActive {
+            let draggingWindowLevel = Int(CGWindowLevelForKey(.draggingWindow))
+            panel.level = NSWindow.Level(rawValue: draggingWindowLevel - 1)
+        } else {
+            panel.level = .screenSaver
+            panel.orderFrontRegardless()
+        }
     }
 
     private func pollCursor() {
@@ -430,6 +463,11 @@ final class LazyNotchWindowController {
 
         if isSystemDragInProgress && NSEvent.pressedMouseButtons == 0 {
             isSystemDragInProgress = false
+        }
+
+        // Safety catch: clear dragging state if the user dropped the item outside the app or the drag aborted
+        if NSEvent.pressedMouseButtons == 0 && !LazyShelfStore.shared.draggedItemIDs.isEmpty {
+            LazyShelfStore.shared.endDragging()
         }
 
         updateMediaCoverHover(at: mouse)

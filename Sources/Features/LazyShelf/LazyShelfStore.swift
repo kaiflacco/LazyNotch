@@ -9,8 +9,8 @@ public final class LazyShelfStore: NSObject, ObservableObject {
 
     public enum AirDropState: Equatable {
         case idle
-        case progress
-        case success
+        case opening
+        case opened
         case failure
     }
 
@@ -128,10 +128,18 @@ public final class LazyShelfStore: NSObject, ObservableObject {
         selectionAnchorID = nil
     }
 
+    public func selectOnly(_ item: LazyShelfItem) {
+        guard items.contains(where: { $0.id == item.id }) else { return }
+        selectedItemIDs = [item.id]
+        selectionAnchorID = item.id
+        focusedItemID = item.id
+    }
+
     public func beginDragging(_ item: LazyShelfItem) {
         if selectedItemIDs.contains(item.id) {
             draggedItemIDs = items.map(\.id).filter(selectedItemIDs.contains)
         } else {
+            selectOnly(item)
             draggedItemIDs = [item.id]
         }
     }
@@ -140,8 +148,12 @@ public final class LazyShelfStore: NSObject, ObservableObject {
         draggedItemIDs = []
     }
 
-    public func moveDraggedItems(before targetID: UUID?) {
-        let movingIDs = Set(draggedItemIDs)
+    public func moveDraggedItems(before targetID: UUID?, afterTarget: Bool = false) {
+        moveItems(draggedItemIDs, before: targetID, afterTarget: afterTarget)
+    }
+
+    private func moveItems(_ itemIDs: [UUID], before targetID: UUID?, afterTarget: Bool = false) {
+        let movingIDs = Set(itemIDs)
         guard !movingIDs.isEmpty else { return }
         if let targetID, movingIDs.contains(targetID) { return }
 
@@ -150,7 +162,7 @@ public final class LazyShelfStore: NSObject, ObservableObject {
         let targetIndex: Int
         if let targetID {
             guard let index = remaining.firstIndex(where: { $0.id == targetID }) else { return }
-            targetIndex = index
+            targetIndex = afterTarget ? index + 1 : index
         } else {
             targetIndex = remaining.endIndex
         }
@@ -160,6 +172,33 @@ public final class LazyShelfStore: NSObject, ObservableObject {
         persistItems()
     }
 
+    public func moveDraggedItems(after targetID: UUID?) {
+        moveDraggedItems(before: targetID, afterTarget: true)
+    }
+
+    public func moveDraggedItems(over targetID: UUID?) {
+        moveItems(draggedItemIDs, over: targetID)
+    }
+
+    public func moveItems(_ itemIDs: [UUID], over targetID: UUID?) {
+        guard let targetID else {
+            moveItems(itemIDs, before: nil)
+            return
+        }
+
+        let movingIDs = Set(itemIDs)
+        guard !movingIDs.contains(targetID),
+              let targetIndex = items.firstIndex(where: { $0.id == targetID }),
+              let firstMovingIndex = items.firstIndex(where: { movingIDs.contains($0.id) }),
+              let lastMovingIndex = items.lastIndex(where: { movingIDs.contains($0.id) }) else { return }
+
+        if targetIndex < firstMovingIndex {
+            moveItems(itemIDs, before: targetID)
+        } else if targetIndex > lastMovingIndex {
+            moveItems(itemIDs, before: targetID, afterTarget: true)
+        }
+    }
+
     @discardableResult
     public func sendAllViaAirDrop() -> Bool {
         sendViaAirDrop(items.map(\.url))
@@ -167,8 +206,19 @@ public final class LazyShelfStore: NSObject, ObservableObject {
 
     @discardableResult
     public func sendDraggedItemsViaAirDrop() -> Bool {
-        let dragged = Set(draggedItemIDs)
+        let dragged = draggedItemIDs.isEmpty ? selectedItemIDs : Set(draggedItemIDs)
         return sendViaAirDrop(items.filter { dragged.contains($0.id) }.map(\.url))
+    }
+
+    @discardableResult
+    public func sendSelectedItemsViaAirDrop() -> Bool {
+        sendViaAirDrop(items.filter { selectedItemIDs.contains($0.id) }.map(\.url))
+    }
+
+    @discardableResult
+    public func sendItemsViaAirDrop(_ itemIDs: [UUID]) -> Bool {
+        let itemIDs = Set(itemIDs)
+        return sendViaAirDrop(items.filter { itemIDs.contains($0.id) }.map(\.url))
     }
 
     @discardableResult
@@ -176,13 +226,13 @@ public final class LazyShelfStore: NSObject, ObservableObject {
         guard !urls.isEmpty else { return false }
         let generation = UUID()
         airDropGeneration = generation
-        airDropState = .progress
+        airDropState = .opening
         let succeeded = airDropHandler(urls)
 
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(350))
             guard let self, self.airDropGeneration == generation else { return }
-            self.airDropState = succeeded ? .success : .failure
+            self.airDropState = succeeded ? .opened : .failure
             try? await Task.sleep(for: .seconds(1.2))
             guard self.airDropGeneration == generation else { return }
             self.airDropState = .idle

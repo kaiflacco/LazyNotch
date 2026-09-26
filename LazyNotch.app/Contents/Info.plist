@@ -6,6 +6,19 @@
     <string>com.lazynotch.app</string>
     <key>CFBundleName</key>
     <string>LazyNotch</string>
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.lazynotch.shelf-items</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeDescription</key>
+            <string>Lazy Shelf Items</string>
+        </dict>
+    </array>
     <key>NSCalendarsUsageDescription</key>
     <string>LazyNotch needs calendar access to show your upcoming events in the notch.</string>
     <key>NSCalendarsFullAccessUsageDescription</key>
@@ -13,6 +26,6 @@
     <key>NSCameraUsageDescription</key>
     <string>LazyNotch needs camera access for the Hand Mirror feature.</string>
     <key>NSAppleEventsUsageDescription</key>
-    <string>LazyNotch needs to talk to Spotify and Music to show album art, the live waveform, and playback controls in the notch.</string>
+    <string>LazyNotch uses macOS's system media session for supported apps and browser tabs. Apple Events access may be used for browser thumbnails and optional app-specific controls.</string>
 </dict>
 </plist>

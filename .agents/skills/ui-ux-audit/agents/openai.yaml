@@ -1,0 +1,6 @@
+interface:
+  display_name: "UI/UX Audit"
+  short_description: "Audit the whole app for UX bugs and craft"
+  default_prompt: "Use $ui-ux-audit to audit this entire codebase for UI/UX bugs, accessibility gaps, and visual inconsistencies."
+policy:
+  allow_implicit_invocation: false

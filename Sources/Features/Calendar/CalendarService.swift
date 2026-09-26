@@ -29,9 +29,11 @@ public final class CalendarService: ObservableObject {
     @Published public private(set) var nextEvent: UpcomingCalendarEvent?
     @Published public private(set) var hasPermission: Bool = false
     @Published public private(set) var weekEvents: [String: [UpcomingCalendarEvent]] = [:]
-    
+    @Published public private(set) var isLoading: Bool = false
+
     private var eventStore = EKEventStore()
     private var cancellables = Set<AnyCancellable>()
+    private var fetchGeneration: UInt64 = 0
     
     nonisolated private static let dayKeyFormatter: DateFormatter = {
         let formatter = DateFormatter()
@@ -48,6 +50,13 @@ public final class CalendarService: ObservableObject {
     nonisolated public static func groupedEvents(_ events: [UpcomingCalendarEvent]) -> [String: [UpcomingCalendarEvent]] {
         Dictionary(grouping: events, by: { dayKey(for: $0.startDate) })
             .mapValues { $0.sorted { $0.startDate < $1.startDate } }
+    }
+
+    nonisolated public static func hasEventIndicator(
+        hasPermission: Bool,
+        events: [UpcomingCalendarEvent]?
+    ) -> Bool {
+        hasPermission && !(events?.isEmpty ?? true)
     }
     
     private init() {
@@ -82,26 +91,7 @@ public final class CalendarService: ObservableObject {
 
     public func events(for date: Date) -> [UpcomingCalendarEvent] {
         guard hasPermission else { return [] }
-        let key = Self.dayKey(for: date)
-        if let cached = weekEvents[key] {
-            return cached
-        }
-        let cal = Calendar.current
-        let start = cal.startOfDay(for: date)
-        guard let end = cal.date(bySettingHour: 23, minute: 59, second: 59, of: date) else { return [] }
-        let predicate = eventStore.predicateForEvents(withStart: start, end: end, calendars: nil)
-        let found = eventStore.events(matching: predicate)
-            .sorted { $0.startDate < $1.startDate }
-            .map {
-                UpcomingCalendarEvent(
-                    title: $0.title ?? "Event",
-                    startDate: $0.startDate,
-                    endDate: $0.endDate,
-                    isAllDay: $0.isAllDay
-                )
-            }
-        weekEvents[key] = found
-        return found
+        return weekEvents[Self.dayKey(for: date)] ?? []
     }
 
     public func openCalendarSettings() {
@@ -196,17 +186,7 @@ public final class CalendarService: ObservableObject {
             // whenever the app merely became active.
             clearUnavailableState()
         } else {
-            // Test if events can actually be fetched (in case TCC granted without updating status cache)
-            let cal = Calendar.current
-            let today = Date()
-            let predicate = eventStore.predicateForEvents(withStart: cal.startOfDay(for: today), end: today, calendars: nil)
-            let testEvents = eventStore.events(matching: predicate)
-            if !testEvents.isEmpty {
-                hasPermission = true
-                fetchUpcomingEvents()
-            } else {
-                clearUnavailableState()
-            }
+            clearUnavailableState()
         }
     }
     
@@ -215,11 +195,16 @@ public final class CalendarService: ObservableObject {
             clearUnavailableState()
             return
         }
+
+        fetchGeneration &+= 1
+        let generation = fetchGeneration
+        isLoading = true
         
         let cal = Calendar.current
         let today = Date()
         guard let startDate = cal.date(byAdding: .day, value: -4, to: cal.startOfDay(for: today)),
               let endDate = cal.date(bySettingHour: 23, minute: 59, second: 59, of: cal.date(byAdding: .day, value: 4, to: today) ?? today) else {
+            isLoading = false
             return
         }
         
@@ -248,13 +233,17 @@ public final class CalendarService: ObservableObject {
             let next = upcoming ?? todayEvents.first
 
             Task { @MainActor in
+                guard self.fetchGeneration == generation, self.hasPermission else { return }
                 self.weekEvents = grouped
                 self.nextEvent = next
+                self.isLoading = false
             }
         }
     }
 
     private func clearUnavailableState() {
+        fetchGeneration &+= 1
+        isLoading = false
         hasPermission = false
         nextEvent = nil
         weekEvents.removeAll()

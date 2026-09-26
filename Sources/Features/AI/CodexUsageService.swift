@@ -1,6 +1,20 @@
 import AppKit
 import Combine
 
+enum CodexUsageState: Equatable {
+    case loading
+    case available
+    case unavailable
+
+    var displayLabel: String {
+        switch self {
+        case .loading: return "Loading"
+        case .available: return "Available"
+        case .unavailable: return "Unavailable"
+        }
+    }
+}
+
 struct CodexUsageWindow: Equatable {
     let usedPercent: Int
     let resetsAt: Date?
@@ -25,6 +39,7 @@ final class CodexUsageService: ObservableObject {
     static let shared = CodexUsageService()
 
     @Published private(set) var usage: CodexUsage?
+    @Published private(set) var usageState: CodexUsageState = .loading
     @Published private(set) var hostIsActive = false
     @Published private(set) var activeHostBundleIdentifier: String?
     @Published private(set) var activeHostName: String?
@@ -50,6 +65,7 @@ final class CodexUsageService: ObservableObject {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.refreshHostState()
+                self?.refresh()
             }
         }
 
@@ -71,13 +87,21 @@ final class CodexUsageService: ObservableObject {
         }
         finishProcess()
         usage = nil
+        usageState = .loading
         hostIsActive = false
         activeHostBundleIdentifier = nil
         activeHostName = nil
     }
 
     func refresh() {
-        guard process == nil, let executableURL = codexExecutableURL() else { return }
+        guard process == nil else { return }
+        guard let executableURL = codexExecutableURL() else {
+            usageState = .unavailable
+            return
+        }
+        if usage == nil {
+            usageState = .loading
+        }
 
         let child = Process()
         let stdin = Pipe()
@@ -105,6 +129,7 @@ final class CodexUsageService: ObservableObject {
         do {
             try child.run()
         } catch {
+            usageState = .unavailable
             return
         }
 
@@ -307,6 +332,7 @@ final class CodexUsageService: ObservableObject {
                 ?? (result["rateLimits"] as? [String: Any]),
               let primary = Self.parseWindow(snapshot["primary"] as? [String: Any]),
               let secondary = Self.parseWindow(snapshot["secondary"] as? [String: Any]) else {
+            usageState = .unavailable
             finishProcess()
             return
         }
@@ -317,6 +343,7 @@ final class CodexUsageService: ObservableObject {
             planName: snapshot["planType"] as? String,
             fetchedAt: Date()
         )
+        usageState = .available
         finishProcess()
     }
 
@@ -352,6 +379,9 @@ final class CodexUsageService: ObservableObject {
         process = nil
         input = nil
         outputBuffer.removeAll(keepingCapacity: true)
+        if usage == nil {
+            usageState = .unavailable
+        }
     }
 
     private func codexExecutableURL() -> URL? {

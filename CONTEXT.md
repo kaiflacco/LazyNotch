@@ -25,16 +25,40 @@ A user-facing LazyNotch capability with its own state, actions, and presentation
 _Avoid_: module, widget
 
 **Lazy Shelf**:
-The temporary local file tray where files can be staged, previewed, opened, dragged, or sent with AirDrop.
+The persistent local staging area for file references. Files can remain there across launches, be previewed or opened, dragged to external destinations, accepted from Finder, or sent with AirDrop; the Shelf does not own or automatically remove the source files.
 _Avoid_: Tray, file manager
+
+**Shelf item**:
+A file or folder reference held by Lazy Shelf. A Shelf item represents the source without taking ownership of, moving, or deleting it.
+_Avoid_: file copy, attachment
+
+**Shelf selection**:
+The set of Shelf items currently selected by the user. A plain click selects one item; Command-click toggles an item, Shift-click extends the selection, and Command-A selects all visible items.
+_Avoid_: active file, selected file list
+
+**Focused Shelf item**:
+The Shelf item currently targeted by keyboard actions such as Space, preview, or open. A focused Shelf item may be one member of a larger Shelf selection.
+_Avoid_: current file, active item
+
+**Unavailable Shelf item**:
+A Shelf item whose source can no longer be resolved. It remains in Lazy Shelf but cannot be previewed, opened, or exported until its source becomes available again.
+_Avoid_: broken file, stale item
 
 **Hand Mirror**:
 The camera-preview feature for viewing and adjusting the user’s camera feed without switching applications.
 _Avoid_: camera utility
 
+**Hand Mirror availability**:
+Whether Hand Mirror can provide a usable camera preview, separate from whether the user has granted camera permission.
+_Avoid_: camera permission
+
 **Codex usage**:
 The coding-session activity that presents remaining usage and the active coding host when available.
 _Avoid_: AI backend, quota service
+
+**Share sheet opened**:
+The Lazy Shelf status meaning macOS presented the sharing interface; it does not claim that a recipient received the item.
+_Avoid_: sent, delivered
 
 ## Architecture language
 

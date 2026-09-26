@@ -13,8 +13,9 @@ cd "$(dirname "$0")"
 echo "==> swift build (release)"
 swift build -c release
 
-echo "==> installing binary into LazyNotch.app"
+echo "==> installing binary and Info.plist into LazyNotch.app"
 cp -f .build/release/LazyNotch LazyNotch.app/Contents/MacOS/LazyNotch
+cp -f Info.plist LazyNotch.app/Contents/Info.plist
 
 # Sign with the Apple Development identity (stable Team ID) so TCC permission
 # grants (Calendar, Camera) survive rebuilds. Falls back to ad-hoc if absent,

@@ -50,6 +50,7 @@ A starting situation that generates work, then merges onto the main flow.
 Not feature work, just upkeep.
 
 - **`/improve-codebase-architecture`** runs whenever you have a spare moment to keep the codebase good for agents to operate in. It surfaces **deepening opportunities**; picking one _generates an idea_ you can take into the main flow at `/grill-with-docs`. It's the survey that finds the candidates; **`/codebase-design`** (below) is the bench you design the chosen one on.
+- **`/ui-ux-audit`** audits the whole product as a senior UI/UX reviewer and QA analyst: map every surface and journey, find user-facing bugs and accessibility gaps, and report visual or interaction debt with evidence and priorities. Use it when the request is a holistic UI/UX review, not a single feature implementation.
 
 ## Vocabulary underneath
 

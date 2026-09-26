@@ -47,23 +47,30 @@ private final class CaptureSessionWorker: NSObject, AVCaptureVideoDataOutputSamp
 
             do {
                 let input = try AVCaptureDeviceInput(device: device)
-                if self.session.canAddInput(input) {
-                    self.session.addInput(input)
+                guard self.session.canAddInput(input) else {
+                    self.session.commitConfiguration()
+                    Task { @MainActor in
+                        completion(false, "Camera input could not be configured.")
+                    }
+                    return
                 }
+                self.session.addInput(input)
                 
                 let output = AVCaptureVideoDataOutput()
                 output.videoSettings = [kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32BGRA)]
                 output.setSampleBufferDelegate(self, queue: self.outputQueue)
                 
-                if self.session.canAddOutput(output) {
-                    self.session.addOutput(output)
-                    print("LAZYNOTCH: Video Data Output added")
-                } else {
-                    print("LAZYNOTCH: Failed to add Video Data Output")
+                guard self.session.canAddOutput(output) else {
+                    self.session.commitConfiguration()
+                    Task { @MainActor in
+                        completion(false, "Camera output could not be configured.")
+                    }
+                    return
                 }
-                
-                self.isConfigured = true
+                self.session.addOutput(output)
+
                 self.session.commitConfiguration()
+                self.isConfigured = true
                 Task { @MainActor in
                     completion(true, nil)
                 }
@@ -115,12 +122,21 @@ private final class CaptureSessionWorker: NSObject, AVCaptureVideoDataOutputSamp
 /// Carefully manages lifecycle so the green camera indicator LED is only on when actively viewing.
 @MainActor
 public final class CameraManager: ObservableObject {
+    public enum Availability: Equatable {
+        case permissionRequired
+        case permissionDenied
+        case starting
+        case ready
+        case unavailable(String)
+    }
+
     public static let shared = CameraManager()
 
     @Published public var isRunning: Bool = false
     @Published public var hasPermission: Bool = false
     @Published public var errorMessage: String?
     @Published public var currentFrame: CGImage?
+    @Published public private(set) var availability: Availability = .permissionRequired
     
     // The active filter/effect
     public var currentEffect: MirrorEffect = .normal {
@@ -156,12 +172,19 @@ public final class CameraManager: ObservableObject {
         case .authorized:
             self.hasPermission = true
             self.errorMessage = nil
+            if case .permissionRequired = availability {
+                availability = .ready
+            } else if case .permissionDenied = availability {
+                availability = .ready
+            }
         case .notDetermined:
             self.hasPermission = false
             self.errorMessage = nil
+            self.availability = .permissionRequired
         default:
             self.hasPermission = false
             self.errorMessage = "Camera access denied. Enable in System Settings > Privacy & Security > Camera."
+            self.availability = .permissionDenied
         }
     }
 
@@ -171,19 +194,33 @@ public final class CameraManager: ObservableObject {
         case .authorized:
             self.hasPermission = true
             self.errorMessage = nil
+            self.availability = .ready
             completion?(true)
         case .notDetermined:
             AVCaptureDevice.requestAccess(for: .video) { granted in
                 Task { @MainActor in
                     self.hasPermission = granted
                     self.errorMessage = granted ? nil : "Camera access denied. Enable in System Settings > Privacy & Security > Camera."
+                    self.availability = granted ? .ready : .permissionDenied
                     completion?(granted)
                 }
             }
         default:
             self.hasPermission = false
             self.errorMessage = "Camera access denied. Enable in System Settings > Privacy & Security > Camera."
+            self.availability = .permissionDenied
             completion?(false)
+        }
+    }
+
+    public func openSettings() {
+        let urls = [
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Camera",
+            "x-apple.systempreferences:com.apple.preference.security"
+        ]
+        for string in urls {
+            guard let url = URL(string: string) else { continue }
+            if NSWorkspace.shared.open(url) { return }
         }
     }
 
@@ -204,10 +241,16 @@ public final class CameraManager: ObservableObject {
             return
         }
 
+        availability = .starting
+        errorMessage = nil
         worker.configure { [weak self] success, error in
             guard let self, self.lifecycleGeneration == generation else { return }
             if !success {
-                self.errorMessage = error
+                let message = error ?? "Camera could not be started."
+                self.isRunning = false
+                self.currentFrame = nil
+                self.errorMessage = message
+                self.availability = .unavailable(message)
                 return
             }
 
@@ -218,6 +261,13 @@ public final class CameraManager: ObservableObject {
             self.worker.start { [weak self] isRunning in
                 guard let self, self.lifecycleGeneration == generation else { return }
                 self.isRunning = isRunning
+                if isRunning {
+                    self.availability = .ready
+                } else {
+                    let message = "Camera could not be started."
+                    self.errorMessage = message
+                    self.availability = .unavailable(message)
+                }
             }
         }
     }

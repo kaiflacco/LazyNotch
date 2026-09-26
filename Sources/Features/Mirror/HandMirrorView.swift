@@ -102,27 +102,7 @@ public struct HandMirrorView: View {
             ZStack {
                 Color.black
 
-                if camera.hasPermission {
-                    VideoPreviewLayerRepresentable(currentFrame: camera.currentFrame, isMirrored: isMirrored)
-                        .padding(.top, 12)
-                } else {
-                    VStack(spacing: 10) {
-                        Image(systemName: "video.slash.fill")
-                            .font(.system(size: 32))
-                            .foregroundStyle(.white.opacity(0.6))
-
-                        Text("Camera Access Required")
-                            .font(.system(size: 15, weight: .semibold))
-                            .foregroundStyle(.white)
-
-                        Text(camera.errorMessage ?? "Enable camera access in System Settings > Privacy & Security > Camera.")
-                            .font(.system(size: 12))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .multilineTextAlignment(.center)
-                            .padding(.horizontal, 24)
-                    }
-                    .padding(.top, 12)
-                }
+                cameraContent
             }
             .clipShape(HandMirrorPointerShape())
 
@@ -196,6 +176,81 @@ public struct HandMirrorView: View {
         .onDisappear {
             camera.stop()
         }
+    }
+
+    @ViewBuilder
+    private var cameraContent: some View {
+        switch camera.availability {
+        case .ready where camera.isRunning && camera.currentFrame != nil:
+            VideoPreviewLayerRepresentable(currentFrame: camera.currentFrame, isMirrored: isMirrored)
+        case .ready:
+            statusContent(
+                icon: "video.fill",
+                title: "Starting Hand Mirror",
+                message: "Waiting for the first camera frame…"
+            )
+        case .starting:
+            statusContent(
+                icon: "video.fill",
+                title: "Starting Hand Mirror",
+                message: "Preparing your camera preview…"
+            )
+        case .permissionRequired:
+            statusContent(
+                icon: "video.slash.fill",
+                title: "Camera Access Required",
+                message: "Allow camera access to use Hand Mirror.",
+                actionTitle: "Request Camera Access",
+                action: { camera.requestAccess() }
+            )
+        case .permissionDenied:
+            statusContent(
+                icon: "video.slash.fill",
+                title: "Camera Access Denied",
+                message: "Enable camera access in System Settings > Privacy & Security > Camera.",
+                actionTitle: "Open System Settings",
+                action: camera.openSettings
+            )
+        case .unavailable(let message):
+            statusContent(
+                icon: "exclamationmark.triangle.fill",
+                title: "Hand Mirror Unavailable",
+                message: message,
+                actionTitle: "Retry",
+                action: camera.start
+            )
+        }
+    }
+
+    private func statusContent(
+        icon: String,
+        title: String,
+        message: String,
+        actionTitle: String? = nil,
+        action: (() -> Void)? = nil
+    ) -> some View {
+        VStack(spacing: 10) {
+            Image(systemName: icon)
+                .font(.system(size: 32))
+                .foregroundStyle(.white.opacity(0.6))
+
+            Text(title)
+                .font(.system(size: 15, weight: .semibold))
+                .foregroundStyle(.white)
+
+            Text(message)
+                .font(.system(size: 12))
+                .foregroundStyle(.white.opacity(0.6))
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 24)
+
+            if let actionTitle, let action {
+                Button(actionTitle, action: action)
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+            }
+        }
+        .padding(.top, 12)
     }
 
     /// Small breathing margin between the window frame and the visible shape.
